@@ -1,4 +1,4 @@
-from llmify.providers.base import BaseChatModel
+from llmify import BaseChatModel
 
 
 class DummyModel(BaseChatModel):

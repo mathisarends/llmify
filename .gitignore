@@ -34,3 +34,6 @@ htmlcov/
 Thumbs.db
 
 uv.lock
+
+
+.ruff_cache/

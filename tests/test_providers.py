@@ -1,4 +1,4 @@
-from llmify.providers.base import BaseOpenAICompatible
+from llmify.providers import BaseOpenAICompatible
 from llmify import UserMessage, ImageMessage
 
 
