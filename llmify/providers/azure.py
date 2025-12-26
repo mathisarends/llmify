@@ -1,10 +1,10 @@
 import os
 import httpx
-from openai import AsyncOpenAI
+from openai import AsyncAzureOpenAI
 from openai.types.chat import ChatCompletionChunk
 from llmify.messages import Message
 from llmify.providers.base import BaseOpenAICompatible
-from typing import Type, TypeVar, AsyncIterator, Any
+from typing import Any, Type, TypeVar, AsyncIterator
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -12,11 +12,13 @@ T = TypeVar('T', bound=BaseModel)
 
 load_dotenv(override=True)
 
-class ChatOpenAI(BaseOpenAICompatible):
+class ChatAzureOpenAI(BaseOpenAICompatible):
     def __init__(
         self, 
         model: str = "gpt-4o",
         api_key: str | None = None,
+        azure_endpoint: str | None = None,
+        api_version: str = "2024-02-15-preview",
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -27,7 +29,6 @@ class ChatOpenAI(BaseOpenAICompatible):
         response_format: dict | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
-        default_headers: dict | None = None,
         **kwargs: Any
     ):
         super().__init__(
@@ -44,12 +45,16 @@ class ChatOpenAI(BaseOpenAICompatible):
             **kwargs
         )
         if api_key is None:
-            api_key = os.getenv("OPENAI_API_KEY")
-        self._client = AsyncOpenAI(
+            api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        if azure_endpoint is None:
+            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        
+        self._client = AsyncAzureOpenAI(
             api_key=api_key,
+            azure_endpoint=azure_endpoint,
+            api_version=api_version,
             timeout=timeout,
-            max_retries=max_retries,
-            default_headers=default_headers
+            max_retries=max_retries
         )
         self._model = model
     
