@@ -1,9 +1,9 @@
 [project]
-name = "llmify"
+name = "py-llmify"
 version = "0.1.0"
-description = "Add your description here"
+description = "A minimal, fast, and type-safe Python library for LLM chat completions with OpenAI and Azure OpenAI support"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
     "openai>=2.14.0",
     "pydantic>=2.12.5",

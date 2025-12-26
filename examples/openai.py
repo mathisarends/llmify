@@ -1,6 +1,4 @@
 import asyncio
-import base64
-from pathlib import Path
 from llmify import ChatOpenAI, SystemMessage, UserMessage, ImageMessage
 from pydantic import BaseModel
 
@@ -56,22 +54,6 @@ async def image_example_inline():
     print(f"Image analysis: {response}")
 
 
-async def image_example_file():
-    llm = ChatOpenAI(model="gpt-4o")
-
-    image_path = Path(__file__).parent / "test_image.jpg"
-    base64_image = base64.b64encode(image_path.read_bytes()).decode("utf-8")
-
-    response = await llm.invoke(
-        [
-            UserMessage("Describe this image in detail"),
-            ImageMessage(base64_data=base64_image, media_type="image/jpeg"),
-        ]
-    )
-
-    print(f"Image analysis: {response}")
-
-
 async def main():
     print("=== Simple Completion ===")
     await simple_example()
@@ -84,11 +66,6 @@ async def main():
 
     print("\n=== Image Analysis (inline) ===")
     await image_example_inline()
-
-    image_path = Path(__file__).parent / "test_image.jpg"
-    if image_path.exists():
-        print("\n=== Image Analysis (file) ===")
-        await image_example_file()
 
 
 if __name__ == "__main__":
