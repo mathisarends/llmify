@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+
 class ChatOpenAI(BaseOpenAICompatible):
     def __init__(
-        self, 
+        self,
         model: str = "gpt-4o",
         api_key: str | None = None,
         max_tokens: int | None = None,
@@ -23,7 +24,7 @@ class ChatOpenAI(BaseOpenAICompatible):
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
         default_headers: dict | None = None,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         super().__init__(
             max_tokens=max_tokens,
@@ -36,15 +37,15 @@ class ChatOpenAI(BaseOpenAICompatible):
             response_format=response_format,
             timeout=timeout,
             max_retries=max_retries,
-            **kwargs
+            **kwargs,
         )
         if api_key is None:
             api_key = os.getenv("OPENAI_API_KEY")
-        
+
         self._client = AsyncOpenAI(
             api_key=api_key,
             timeout=timeout,
             max_retries=max_retries,
-            default_headers=default_headers
+            default_headers=default_headers,
         )
         self._model = model

@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, TypeVar, Type, Any
+from typing import TypeVar, Any
+
+from collections.abc import AsyncIterator
 from pydantic import BaseModel
 import httpx
 from openai import AsyncOpenAI, AsyncAzureOpenAI
@@ -7,7 +9,8 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from llmify.messages import Message, ImageMessage
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar("T", bound=BaseModel)
+
 
 class BaseChatModel(ABC):
     def __init__(
@@ -22,7 +25,7 @@ class BaseChatModel(ABC):
         response_format: dict | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         self._default_max_tokens = max_tokens
         self._default_temperature = temperature
@@ -35,10 +38,10 @@ class BaseChatModel(ABC):
         self._default_timeout = timeout
         self._default_max_retries = max_retries
         self._default_kwargs = kwargs
-    
+
     def _merge_params(self, method_kwargs: dict[str, Any]) -> dict[str, Any]:
         params = {**self._default_kwargs, **method_kwargs}
-        
+
         param_mapping = {
             "max_tokens": self._default_max_tokens,
             "temperature": self._default_temperature,
@@ -49,42 +52,42 @@ class BaseChatModel(ABC):
             "seed": self._default_seed,
             "response_format": self._default_response_format,
         }
-        
+
         for key, default_value in param_mapping.items():
             if key not in method_kwargs and default_value is not None:
                 params[key] = default_value
-        
+
         params = {k: v for k, v in params.items() if v is not None}
         return params
-    
+
     @abstractmethod
     async def invoke(
-        self, 
+        self,
         messages: list[Message],
         max_tokens: int | None = None,
         temperature: float | None = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> str:
         pass
-    
+
     @abstractmethod
     async def invoke_structured(
-        self, 
-        messages: list[Message], 
-        response_model: Type[T],
+        self,
+        messages: list[Message],
+        response_model: type[T],
         max_tokens: int | None = None,
         temperature: float | None = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> T:
         pass
-    
+
     @abstractmethod
     async def stream(
-        self, 
+        self,
         messages: list[Message],
         max_tokens: int | None = None,
         temperature: float | None = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> AsyncIterator[str]:
         pass
 
@@ -92,72 +95,78 @@ class BaseChatModel(ABC):
 class BaseOpenAICompatible(BaseChatModel):
     _client: AsyncOpenAI | AsyncAzureOpenAI
     _model: str
-    
+
     def _convert_messages(self, messages: list[Message]) -> list[dict]:
         converted = []
         for msg in messages:
             if not isinstance(msg, ImageMessage):
                 converted.append({"role": msg.role, "content": msg.content})
                 continue
-            
+
             content = []
             if msg.content:
                 content.append({"type": "text", "text": msg.content})
-            content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{msg.media_type};base64,{msg.base64_data}"
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{msg.media_type};base64,{msg.base64_data}"
+                    },
                 }
-            })
+            )
             converted.append({"role": msg.role, "content": content})
-        
+
         return converted
-    
+
     async def invoke(
-        self, 
+        self,
         messages: list[Message],
         max_tokens: int | None = None,
         temperature: float | None = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> str:
-        params = self._merge_params({"max_tokens": max_tokens, "temperature": temperature, **kwargs})
+        params = self._merge_params(
+            {"max_tokens": max_tokens, "temperature": temperature, **kwargs}
+        )
         response: ChatCompletion = await self._client.chat.completions.create(
-            model=self._model,
-            messages=self._convert_messages(messages),
-            **params
+            model=self._model, messages=self._convert_messages(messages), **params
         )
         return response.choices[0].message.content or ""
-    
+
     async def invoke_structured(
-        self, 
-        messages: list[Message], 
-        response_model: Type[T],
+        self,
+        messages: list[Message],
+        response_model: type[T],
         max_tokens: int | None = None,
         temperature: float | None = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> T:
-        params = self._merge_params({"max_tokens": max_tokens, "temperature": temperature, **kwargs})
+        params = self._merge_params(
+            {"max_tokens": max_tokens, "temperature": temperature, **kwargs}
+        )
         response = await self._client.beta.chat.completions.parse(
             model=self._model,
             messages=self._convert_messages(messages),
             response_format=response_model,
-            **params
+            **params,
         )
         return response.choices[0].message.parsed
-    
+
     async def stream(
-        self, 
+        self,
         messages: list[Message],
         max_tokens: int | None = None,
         temperature: float | None = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> AsyncIterator[str]:
-        params = self._merge_params({"max_tokens": max_tokens, "temperature": temperature, **kwargs})
+        params = self._merge_params(
+            {"max_tokens": max_tokens, "temperature": temperature, **kwargs}
+        )
         stream = await self._client.chat.completions.create(
             model=self._model,
             messages=self._convert_messages(messages),
             stream=True,
-            **params
+            **params,
         )
         chunk: ChatCompletionChunk
         async for chunk in stream:

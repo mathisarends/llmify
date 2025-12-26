@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+
 class ChatAzureOpenAI(BaseOpenAICompatible):
     def __init__(
-        self, 
+        self,
         model: str = "gpt-4o",
         api_key: str | None = None,
         azure_endpoint: str | None = None,
@@ -24,7 +25,7 @@ class ChatAzureOpenAI(BaseOpenAICompatible):
         response_format: dict | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         super().__init__(
             max_tokens=max_tokens,
@@ -37,18 +38,18 @@ class ChatAzureOpenAI(BaseOpenAICompatible):
             response_format=response_format,
             timeout=timeout,
             max_retries=max_retries,
-            **kwargs
+            **kwargs,
         )
         if api_key is None:
             api_key = os.getenv("AZURE_OPENAI_API_KEY")
         if azure_endpoint is None:
             azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-        
+
         self._client = AsyncAzureOpenAI(
             api_key=api_key,
             azure_endpoint=azure_endpoint,
             api_version=api_version,
             timeout=timeout,
-            max_retries=max_retries
+            max_retries=max_retries,
         )
         self._model = model
