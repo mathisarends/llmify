@@ -1,14 +1,9 @@
 import os
 import httpx
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionChunk
-from llmify.messages import Message
 from llmify.providers.base import BaseOpenAICompatible
-from typing import Type, TypeVar, AsyncIterator, Any
-from pydantic import BaseModel
+from typing import Any
 from dotenv import load_dotenv
-
-T = TypeVar('T', bound=BaseModel)
 
 load_dotenv(override=True)
 
@@ -45,6 +40,7 @@ class ChatOpenAI(BaseOpenAICompatible):
         )
         if api_key is None:
             api_key = os.getenv("OPENAI_API_KEY")
+        
         self._client = AsyncOpenAI(
             api_key=api_key,
             timeout=timeout,
@@ -52,54 +48,3 @@ class ChatOpenAI(BaseOpenAICompatible):
             default_headers=default_headers
         )
         self._model = model
-    
-    async def invoke(
-        self, 
-        messages: list[Message],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        **kwargs: Any
-    ) -> str:
-        params = self._merge_params({"max_tokens": max_tokens, "temperature": temperature, **kwargs})
-        response = await self._client.chat.completions.create(
-            model=self._model,
-            messages=self._convert_messages(messages),
-            **params
-        )
-        return response.choices[0].message.content
-    
-    async def invoke_structured(
-        self, 
-        messages: list[Message], 
-        response_model: Type[T],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        **kwargs: Any
-    ) -> T:
-        params = self._merge_params({"max_tokens": max_tokens, "temperature": temperature, **kwargs})
-        response = await self._client.beta.chat.completions.parse(
-            model=self._model,
-            messages=self._convert_messages(messages),
-            response_format=response_model,
-            **params
-        )
-        return response.choices[0].message.parsed
-    
-    async def stream(
-        self, 
-        messages: list[Message],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        **kwargs: Any
-    ) -> AsyncIterator[str]:
-        params = self._merge_params({"max_tokens": max_tokens, "temperature": temperature, **kwargs})
-        stream = await self._client.chat.completions.create(
-            model=self._model,
-            messages=self._convert_messages(messages),
-            stream=True,
-            **params
-        )
-        chunk: ChatCompletionChunk
-        async for chunk in stream:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
