@@ -1,10 +1,5 @@
-"""
-Quick test of the @tool decorator functionality.
-"""
-
 import asyncio
-from llmify import ChatOpenAI, UserMessage, ToolResultMessage
-from llmify.tools import tool
+from llmify import ChatOpenAI, UserMessage, ToolResultMessage, tool
 
 
 @tool

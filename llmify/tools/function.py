@@ -1,27 +1,6 @@
 import inspect
 import json
-from typing import Any, Callable, Protocol, runtime_checkable, get_type_hints
-
-
-@runtime_checkable
-class Tool(Protocol):
-    """Protocol for tool implementations.
-
-    Any class implementing this protocol can be used as a tool.
-    Allows for flexible tool definitions beyond Pydantic models.
-    """
-
-    @property
-    def name(self) -> str: ...
-
-    def to_openai_schema(self) -> dict[str, Any]: ...
-
-    def parse_arguments(self, arguments: str) -> Any: ...
-
-
-# ============================================================================
-# FunctionTool
-# ============================================================================
+from typing import Any, Callable, get_type_hints
 
 
 class FunctionTool:
@@ -92,7 +71,6 @@ class FunctionTool:
     def _type_to_json_schema(
         self, type_hint: Any, param: inspect.Parameter
     ) -> dict[str, Any]:
-        # Basic type mapping
         type_mapping = {
             str: {"type": "string"},
             int: {"type": "integer"},
@@ -125,64 +103,6 @@ class FunctionTool:
 
     def __call__(self, *args, **kwargs):
         return self._fn(*args, **kwargs)
-
-
-# ============================================================================
-# RawSchemaTool
-# ============================================================================
-
-
-class RawSchemaTool:
-    """Tool implementation for raw JSON schemas.
-
-    Useful when you want full control over the schema or for legacy tools.
-
-    Example:
-        tool = RawSchemaTool(
-            name="search_web",
-            description="Search the web for information",
-            schema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"},
-                    "max_results": {"type": "integer", "default": 10}
-                },
-                "required": ["query"]
-            }
-        )
-    """
-
-    def __init__(
-        self,
-        name: str,
-        schema: dict[str, Any],
-        description: str = "",
-    ):
-        self._name = name
-        self._schema = schema
-        self._description = description
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    def to_openai_schema(self) -> dict[str, Any]:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self._description,
-                "parameters": self._schema,
-            },
-        }
-
-    def parse_arguments(self, arguments: str) -> dict[str, Any]:
-        return json.loads(arguments)
-
-
-# ============================================================================
-# Decorator
-# ============================================================================
 
 
 def tool(
