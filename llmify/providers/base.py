@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import TypeVar, Any
+from typing import Self, TypeVar, Any, Generic
 
 from collections.abc import AsyncIterator
 from pydantic import BaseModel
@@ -12,7 +12,7 @@ from llmify.messages import Message, ImageMessage
 T = TypeVar("T", bound=BaseModel)
 
 
-class BaseChatModel(ABC):
+class BaseChatModel(ABC, Generic[T]):
     def __init__(
         self,
         max_tokens: int | None = None,
@@ -25,6 +25,7 @@ class BaseChatModel(ABC):
         response_format: dict | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
+        _response_model: type[T] | None = None,
         **kwargs: Any,
     ):
         self._default_max_tokens = max_tokens
@@ -38,6 +39,7 @@ class BaseChatModel(ABC):
         self._default_timeout = timeout
         self._default_max_retries = max_retries
         self._default_kwargs = kwargs
+        self._response_model = _response_model
 
     def _merge_params(self, method_kwargs: dict[str, Any]) -> dict[str, Any]:
         params = {**self._default_kwargs, **method_kwargs}
@@ -60,6 +62,10 @@ class BaseChatModel(ABC):
         params = {k: v for k, v in params.items() if v is not None}
         return params
 
+    def with_structured_output(self, response_model: type[T]) -> Self:
+        self._response_model = response_model
+        return self
+
     @abstractmethod
     async def invoke(
         self,
@@ -67,18 +73,11 @@ class BaseChatModel(ABC):
         max_tokens: int | None = None,
         temperature: float | None = None,
         **kwargs: Any,
-    ) -> str:
-        pass
-
-    @abstractmethod
-    async def invoke_structured(
-        self,
-        messages: list[Message],
-        response_model: type[T],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        **kwargs: Any,
-    ) -> T:
+    ) -> str | T:
+        """
+        Invoke the model. Returns str by default, or structured output T
+        if created via with_structured_output().
+        """
         pass
 
     @abstractmethod
@@ -92,9 +91,30 @@ class BaseChatModel(ABC):
         pass
 
 
-class BaseOpenAICompatible(BaseChatModel):
+class BaseOpenAICompatible(BaseChatModel[T]):
     _client: AsyncOpenAI | AsyncAzureOpenAI
     _model: str
+
+    def with_structured_output(
+        self, response_model: type[T]
+    ) -> "BaseOpenAICompatible[T]":
+        instance = self.__class__(
+            max_tokens=self._default_max_tokens,
+            temperature=self._default_temperature,
+            top_p=self._default_top_p,
+            frequency_penalty=self._default_frequency_penalty,
+            presence_penalty=self._default_presence_penalty,
+            stop=self._default_stop,
+            seed=self._default_seed,
+            response_format=self._default_response_format,
+            timeout=self._default_timeout,
+            max_retries=self._default_max_retries,
+            _response_model=response_model,
+            **self._default_kwargs,
+        )
+        instance._client = self._client
+        instance._model = self._model
+        return instance
 
     def _convert_messages(self, messages: list[Message]) -> list[dict]:
         converted = []
@@ -110,7 +130,8 @@ class BaseOpenAICompatible(BaseChatModel):
                 {
                     "type": "image_url",
                     "image_url": {
-                        "url": f"data:{msg.media_type};base64,{msg.base64_data}"
+                        "url": f"data:{msg.media_type};base64,{msg.base64_data}",
+                        "detail": msg.detail,
                     },
                 }
             )
@@ -124,33 +145,24 @@ class BaseOpenAICompatible(BaseChatModel):
         max_tokens: int | None = None,
         temperature: float | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> str | T:
         params = self._merge_params(
             {"max_tokens": max_tokens, "temperature": temperature, **kwargs}
         )
+
+        if self._response_model is not None:
+            response = await self._client.beta.chat.completions.parse(
+                model=self._model,
+                messages=self._convert_messages(messages),
+                response_format=self._response_model,
+                **params,
+            )
+            return response.choices[0].message.parsed
+
         response: ChatCompletion = await self._client.chat.completions.create(
             model=self._model, messages=self._convert_messages(messages), **params
         )
         return response.choices[0].message.content or ""
-
-    async def invoke_structured(
-        self,
-        messages: list[Message],
-        response_model: type[T],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        **kwargs: Any,
-    ) -> T:
-        params = self._merge_params(
-            {"max_tokens": max_tokens, "temperature": temperature, **kwargs}
-        )
-        response = await self._client.beta.chat.completions.parse(
-            model=self._model,
-            messages=self._convert_messages(messages),
-            response_format=response_model,
-            **params,
-        )
-        return response.choices[0].message.parsed
 
     async def stream(
         self,

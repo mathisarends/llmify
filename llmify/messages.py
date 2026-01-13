@@ -34,18 +34,24 @@ class AssistantMessage(Message):
         super().__init__(role=_MessageRole.ASSISTANT, content=content)
 
 
+_DetailLevel = Literal["low", "high", "auto"]
+
+
 @dataclass
 class ImageMessage(Message):
     base64_data: str
     media_type: _MediaType
+    detail: _DetailLevel = "auto"
 
     def __init__(
         self,
         base64_data: str,
         media_type: _MediaType | None = None,
         text: str | None = None,
+        detail: _DetailLevel = "auto",
     ):
         self.base64_data = base64_data
+        self.detail = detail
 
         if media_type is None:
             self.media_type = self._detect_media_type(base64_data)
