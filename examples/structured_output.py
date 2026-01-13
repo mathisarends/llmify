@@ -9,7 +9,7 @@ class Person(BaseModel):
     occupation: str
 
 
-async def structured_example():
+async def main():
     llm = ChatOpenAI(model="gpt-4o")
 
     structured_llm = llm.with_structured_output(Person)
@@ -19,11 +19,6 @@ async def structured_example():
     )
 
     print(f"Name: {person.name}, Age: {person.age}, Job: {person.occupation}")
-
-
-async def main():
-    print("=== Structured Output ===")
-    await structured_example()
 
 
 if __name__ == "__main__":

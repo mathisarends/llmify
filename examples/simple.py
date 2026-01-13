@@ -2,7 +2,7 @@ import asyncio
 from llmify import ChatOpenAI, SystemMessage, UserMessage
 
 
-async def simple_example():
+async def main():
     llm = ChatOpenAI(model="gpt-4o")
 
     response = await llm.invoke(
@@ -10,11 +10,6 @@ async def simple_example():
     )
 
     print(response)
-
-
-async def main():
-    print("=== Simple Completion ===")
-    await simple_example()
 
 
 if __name__ == "__main__":
