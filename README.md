@@ -1,17 +1,21 @@
 # llmify
 
-A lightweight wrapper for LLM providers (OpenAI, Azure, Anthropic, Google Gemini) with a clean, LangChain-inspired API.
+A lightweight, type-safe Python library for LLM chat completions. Inspired by LangChain's message API but simpler and less opinionated.
+
+**Features:**
+- 🎯 Simple, intuitive API for OpenAI and Azure OpenAI
+- 📝 Type-safe structured outputs with Pydantic
+- 🛠️ Built-in tool calling support
+- 🌊 Async streaming
+- 🖼️ Image analysis support
+- ⚡ Minimal dependencies, maximum flexibility
 
 ## Installation
-
 ```bash
 pip install py-llmify
 ```
 
 ## Quick Start
-
-### Basic Completion
-
 ```python
 import asyncio
 from llmify import ChatOpenAI, UserMessage, SystemMessage
@@ -23,15 +27,31 @@ async def main():
         SystemMessage("You are a helpful assistant"),
         UserMessage("What is 2+2?")
     ])
-    print(response)
+
+    print(response)  # "2+2 equals 4"
 
 asyncio.run(main())
 ```
 
-### Structured Output
+## Core Features
 
-Generate structured data with Pydantic models:
+### Message Types
 
+llmify provides LangChain-style message types for clean conversation management:
+```python
+from llmify import SystemMessage, UserMessage, AssistantMessage, ImageMessage
+
+messages = [
+    SystemMessage("You are a Python expert"),
+    UserMessage("How do I read a file?"),
+    AssistantMessage("You can use open() with a context manager"),
+    UserMessage("Show me an example")
+]
+```
+
+### Structured Outputs
+
+Get type-safe, validated responses using Pydantic models:
 ```python
 from pydantic import BaseModel
 from llmify import ChatOpenAI, UserMessage
@@ -42,55 +62,106 @@ class Person(BaseModel):
     occupation: str
 
 async def main():
-    llm = ChatOpenAI()
+    llm = ChatOpenAI(model="gpt-4o")
 
-    person = await llm.invoke_structured([
-        UserMessage("Extract: Anna is 28 and works as a Software Engineer")
-    ], response_model=Person)
+    structured_llm = llm.with_structured_output(Person)
+    person = await structured_llm.invoke([
+        UserMessage("Extract: John is 32 and works as a data scientist")
+    ])
 
-    print(f"Name: {person.name}, Age: {person.age}")
+    print(f"{person.name}, {person.age}, {person.occupation}")
+    # Output: John, 32, data scientist
 
 asyncio.run(main())
 ```
 
+### Tool Calling
+
+Define tools using simple Python functions with the `@tool` decorator:
+```python
+from llmify import ChatOpenAI, UserMessage, ToolResultMessage, tool
+
+@tool
+def get_weather(location: str, unit: str = "celsius") -> str:
+    """Get current weather for a location"""
+    return f"Weather in {location}: 22°{unit[0].upper()}, Sunny"
+
+@tool
+def search_web(query: str, max_results: int = 5) -> str:
+    """Search the web"""
+    return f"Found {max_results} results for '{query}'"
+
+async def main():
+    llm = ChatOpenAI(model="gpt-4o")
+    tools = [get_weather, search_web]
+
+    # Initial request
+    messages = [UserMessage("What's the weather in Paris?")]
+    response = await llm.invoke(messages, tools=tools)
+
+    # Handle tool calls
+    if response.has_tool_calls:
+        messages.append(response.to_message())
+
+        for tool_call in response.tool_calls:
+            # Execute the tool
+            result = tool_call.execute()
+
+            # Add result to conversation
+            messages.append(ToolResultMessage(
+                tool_call_id=tool_call.id,
+                content=result
+            ))
+
+        # Get final response
+        final = await llm.invoke(messages, tools=tools)
+        print(final.content)
+
+asyncio.run(main())
+```
+
+**Key Points:**
+- Type hints are automatically converted to JSON schema
+- Tools are just decorated Python functions
+- Built-in tool execution with `.execute()`
+
 ### Streaming
 
-Stream tokens as they are generated:
-
+Stream responses token-by-token as they're generated:
 ```python
 async def main():
-    llm = ChatOpenAI()
+    llm = ChatOpenAI(model="gpt-4o")
 
-    print("Response: ", end="", flush=True)
     async for chunk in llm.stream([
-        UserMessage("Tell me a short story")
+        UserMessage("Write a haiku about Python")
     ]):
         print(chunk, end="", flush=True)
-    print()
 
 asyncio.run(main())
 ```
 
 ### Image Analysis
 
+Analyze images using vision models:
 ```python
 import base64
-from llmify import ChatOpenAI, UserMessage, ImageMessage
+from llmify import ChatOpenAI, ImageMessage
 
 async def main():
-    llm = ChatOpenAI()
+    llm = ChatOpenAI(model="gpt-4o")
 
     # Load and encode image
     with open("photo.jpg", "rb") as f:
-        base64_image = base64.b64encode(f.read()).decode('utf-8')
+        image_data = base64.b64encode(f.read()).decode('utf-8')
 
     response = await llm.invoke([
-        UserMessage("Describe this image:"),
         ImageMessage(
-            base64_data=base64_image,
-            media_type="image/jpeg"
+            base64_data=image_data,
+            media_type="image/jpeg",
+            text="What's in this image?"
         )
     ])
+
     print(response)
 
 asyncio.run(main())
@@ -98,112 +169,83 @@ asyncio.run(main())
 
 ## Configuration
 
-### API Keys
+### Environment Variables
+```bash
+# OpenAI
+export OPENAI_API_KEY="sk-..."
 
-Set environment variables or pass directly:
-
-```python
-# Environment variable
-import os
-os.environ["OPENAI_API_KEY"] = "sk-..."
-
-llm = ChatOpenAI(api_key="sk-...")
+# Azure OpenAI
+export AZURE_OPENAI_API_KEY="..."
+export AZURE_OPENAI_ENDPOINT="https://.openai.azure.com/"
 ```
 
-### Generation Parameters
+### Model Parameters
 
-Control model behavior with defaults or per-call overrides:
-
+Set defaults when initializing or override per request:
 ```python
 # Set defaults
 llm = ChatOpenAI(
     model="gpt-4o",
-    max_tokens=1000,
     temperature=0.7,
-    top_p=0.9
+    max_tokens=1000
 )
 
-# Override per call
+# Override per request
 response = await llm.invoke(
-    [UserMessage("Hi")],
-    temperature=1.0,  # Override
-    max_tokens=2000
+    messages=[UserMessage("Hi")],
+    temperature=0.2,  # More deterministic
+    max_tokens=500
 )
 ```
 
-## Supported Parameters
-
-### Common Parameters
-- `max_tokens` - Maximum tokens in response
+**Supported Parameters:**
 - `temperature` - Creativity (0-2)
+- `max_tokens` - Maximum response length
 - `top_p` - Nucleus sampling
-- `stop` - Stop sequences
-
-### OpenAI/Azure Specific
 - `frequency_penalty` - Reduce repetition
-- `presence_penalty` - Encourage new topics
+- `presence_penalty` - Encourage diversity
+- `stop` - Stop sequences
 - `seed` - Deterministic outputs
-- `response_format` - JSON mode
-
-### Client Config
-- `timeout` - Request timeout
-- `max_retries` - Retry attempts
-
-## Message Types
-
-### UserMessage
-```python
-UserMessage("What is AI?")
-```
-
-### SystemMessage
-```python
-SystemMessage("You are an expert in quantum physics")
-```
-
-### ImageMessage
-```python
-ImageMessage(
-    base64_data="iVBORw0KGgo...",
-    media_type="image/png",  # or "image/jpeg"
-    text="Describe this"
-)
-```
 
 ## Providers
 
 ### OpenAI
-
 ```python
 from llmify import ChatOpenAI
 
 llm = ChatOpenAI(
     model="gpt-4o",
-    api_key="sk-...",  # or env var OPENAI_API_KEY
+    api_key="sk-..."  # Optional if using env var
 )
 ```
 
 ### Azure OpenAI
-
 ```python
 from llmify import ChatAzureOpenAI
 
 llm = ChatAzureOpenAI(
     model="gpt-4o",
-    api_key="...",  # or env var AZURE_OPENAI_API_KEY
-    azure_endpoint="https://<name>.openai.azure.com/",  # or env var AZURE_OPENAI_ENDPOINT
+    api_key="...",  # Optional if using env var
+    azure_endpoint="https://.openai.azure.com/"  # Optional if using env var
 )
 ```
 
 ## Design Philosophy
 
-**Lightweight & Simple**: Thin wrapper around official SDKs, not a heavy framework.
+**LangChain-Inspired, but Simpler**
+- Familiar message API (`SystemMessage`, `UserMessage`)
+- Same interface across providers
+- Less opinionated, more flexible
 
-**LangChain-Inspired**: Familiar message API (`SystemMessage`, `UserMessage`, `ImageMessage`).
+**Lightweight & Focused**
+- Thin wrapper around official SDKs
+- Minimal dependencies
+- No unnecessary abstractions
 
-**Unified Interface**: Same API across all providers - swap providers with one line.
-
-**Parameter Control**: Sensible defaults + per-call overrides (like official SDKs).
+**Type-Safe & Modern**
+- Full type hints for IDE support
+- Pydantic for validation
+- Async-first design
 
 ## License
 
