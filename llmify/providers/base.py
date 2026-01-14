@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Self, TypeVar, Any, Generic
+from typing import Literal, Self, TypeVar, Any, Generic
 from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
@@ -134,6 +134,7 @@ class BaseOpenAICompatible(BaseChatModel[T]):
         max_tokens: int | None = None,
         temperature: float | None = None,
         tools: list[Tool] | None = None,
+        tool_choice: Literal["auto", "required", "none"] = "auto",
         **kwargs: Any,
     ) -> str | T | ModelResponse:
         params = self._merge_params(
@@ -145,7 +146,9 @@ class BaseOpenAICompatible(BaseChatModel[T]):
             return await self._invoke_with_structured_output(converted_messages, params)
 
         if tools:
-            return await self._invoke_with_tools(converted_messages, tools, params)
+            return await self._invoke_with_tools(
+                converted_messages, tools, params, tool_choice
+            )
 
         return await self._invoke_plain(converted_messages, params)
 
@@ -165,8 +168,8 @@ class BaseOpenAICompatible(BaseChatModel[T]):
         messages: list[dict],
         tools: list[Tool],
         params: dict[str, Any],
+        tool_choice: Literal["auto", "required", "none"] = "auto",
     ) -> ModelResponse:
-        # Convert to OpenAI schema
         openai_tools = [t.to_openai_schema() for t in tools]
         tool_registry = {t.name: t for t in tools}
 
@@ -174,6 +177,7 @@ class BaseOpenAICompatible(BaseChatModel[T]):
             model=self._model,
             messages=messages,
             tools=openai_tools,
+            tool_choice=tool_choice,
             **params,
         )
 

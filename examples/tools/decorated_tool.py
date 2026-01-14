@@ -14,7 +14,7 @@ async def main():
 
     print("🤖 Testing function tool with @tool decorator\n")
 
-    response = await llm.invoke(messages, tools=[get_weather])
+    response = await llm.invoke(messages, tools=[get_weather], tool_choice="required")
 
     if response.has_tool_calls:
         print(f"✅ Tool called: {response.tool_calls[0].name}")
