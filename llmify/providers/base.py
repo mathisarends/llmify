@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import json
 from typing import Literal, Self, TypeVar, Any, Generic
 from collections.abc import AsyncIterator
 
@@ -133,7 +134,7 @@ class BaseOpenAICompatible(BaseChatModel[T]):
         messages: list[Message],
         max_tokens: int | None = None,
         temperature: float | None = None,
-        tools: list[Tool] | None = None,
+        tools: list[Tool | dict] | None = None,
         tool_choice: Literal["auto", "required", "none"] = "auto",
         **kwargs: Any,
     ) -> str | T | ModelResponse:
@@ -166,12 +167,15 @@ class BaseOpenAICompatible(BaseChatModel[T]):
     async def _invoke_with_tools(
         self,
         messages: list[dict],
-        tools: list[Tool],
+        tools: list[Tool | dict],
         params: dict[str, Any],
         tool_choice: Literal["auto", "required", "none"] = "auto",
     ) -> ModelResponse:
-        openai_tools = [t.to_openai_schema() for t in tools]
-        tool_registry = {t.name: t for t in tools}
+        openai_tools = [
+            t if isinstance(t, dict) else t.to_openai_schema() for t in tools
+        ]
+
+        tool_registry = {t.name: t for t in tools if not isinstance(t, dict)}
 
         response: ChatCompletion = await self._client.chat.completions.create(
             model=self._model,
@@ -200,15 +204,14 @@ class BaseOpenAICompatible(BaseChatModel[T]):
 
         tool_calls = []
         for tc in raw_tool_calls:
-            function_name = tc.function.name
+            name = tc.function.name
 
-            if function_name not in tool_registry:
-                raise ValueError(f"Unknown tool: {function_name}")
+            if name in tool_registry:
+                parsed_args = tool_registry[name].parse_arguments(tc.function.arguments)
+            else:
+                parsed_args = json.loads(tc.function.arguments)
 
-            tool = tool_registry[function_name]
-            parsed_args = tool.parse_arguments(tc.function.arguments)
-
-            tool_calls.append(ToolCall(id=tc.id, name=function_name, tool=parsed_args))
+            tool_calls.append(ToolCall(id=tc.id, name=name, tool=parsed_args))
 
         return tool_calls
 

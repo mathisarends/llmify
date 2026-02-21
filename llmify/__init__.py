@@ -1,4 +1,5 @@
 from .messages import (
+    Message,
     SystemMessage,
     UserMessage,
     AssistantMessage,
@@ -16,6 +17,7 @@ from .tools import (
 )
 
 __all__ = [
+    "Message",
     "SystemMessage",
     "UserMessage",
     "AssistantMessage",
