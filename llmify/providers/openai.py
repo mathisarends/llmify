@@ -1,11 +1,8 @@
 import os
 import httpx
 from openai import AsyncOpenAI
-from llmify.providers.base import BaseOpenAICompatible
+from llmify.providers._base_openai import BaseOpenAICompatible
 from typing import Any
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
 
 
 class ChatOpenAI(BaseOpenAICompatible):
@@ -39,11 +36,8 @@ class ChatOpenAI(BaseOpenAICompatible):
             max_retries=max_retries,
             **kwargs,
         )
-        if api_key is None:
-            api_key = os.getenv("OPENAI_API_KEY")
-
         self._client = AsyncOpenAI(
-            api_key=api_key,
+            api_key=api_key or os.getenv("OPENAI_API_KEY"),
             timeout=timeout,
             max_retries=max_retries,
             default_headers=default_headers,

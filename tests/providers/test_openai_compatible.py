@@ -3,15 +3,17 @@ from unittest.mock import AsyncMock, Mock
 from pydantic import BaseModel
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
-from llmify.providers.base import BaseOpenAICompatible
+from llmify.providers._base_openai import BaseOpenAICompatible, ChatInvokeCompletion
 from llmify.messages import (
     UserMessage,
     SystemMessage,
     AssistantMessage,
-    ImageMessage,
     ToolResultMessage,
-    AssistantToolCallMessage,
+    ContentPartTextParam,
+    ContentPartImageParam,
+    ImageURL,
     ToolCall,
+    Function,
     ModelResponse,
 )
 from llmify.tools import FunctionTool
@@ -47,29 +49,33 @@ def search_tool() -> FunctionTool:
 
 class TestMessageConversion:
     def test_converts_user_message(self, mock_model: MockChatModel):
-        messages = [UserMessage("Hello")]
+        messages = [UserMessage(content="Hello")]
         converted = mock_model._convert_messages(messages)
 
         assert converted == [{"role": "user", "content": "Hello"}]
 
     def test_converts_system_message(self, mock_model: MockChatModel):
-        messages = [SystemMessage("You are helpful")]
+        messages = [SystemMessage(content="You are helpful")]
         converted = mock_model._convert_messages(messages)
 
         assert converted == [{"role": "system", "content": "You are helpful"}]
 
     def test_converts_assistant_message(self, mock_model: MockChatModel):
-        messages = [AssistantMessage("I can help")]
+        messages = [AssistantMessage(content="I can help")]
         converted = mock_model._convert_messages(messages)
 
         assert converted == [{"role": "assistant", "content": "I can help"}]
 
-    def test_converts_image_message(self, mock_model: MockChatModel):
-        message = ImageMessage(
-            base64_data="iVBORw0KG...",
-            media_type="image/png",
-            text="What's this?",  # Fixed: ImageMessage uses 'text', not 'content'
-        )
+    def test_converts_user_message_with_image(self, mock_model: MockChatModel):
+        message = UserMessage(content=[
+            ContentPartTextParam(text="What's this?"),
+            ContentPartImageParam(
+                image_url=ImageURL(
+                    url="data:image/png;base64,iVBORw0KG...",
+                    media_type="image/png",
+                )
+            ),
+        ])
         converted = mock_model._convert_single_message(message)
 
         assert converted["role"] == "user"
@@ -88,10 +94,15 @@ class TestMessageConversion:
             "content": "Search completed",
         }
 
-    def test_converts_assistant_tool_call_with_dict(self, mock_model: MockChatModel):
-        message = AssistantToolCallMessage(
+    def test_converts_assistant_message_with_tool_calls(self, mock_model: MockChatModel):
+        message = AssistantMessage(
             content="Let me search",
-            tool_calls=[ToolCall(id="call_123", name="search", tool={"query": "test"})],
+            tool_calls=[
+                ToolCall(
+                    id="call_123",
+                    function=Function(name="search", arguments='{"query": "test"}'),
+                )
+            ],
         )
         converted = mock_model._convert_single_message(message)
 
@@ -101,20 +112,13 @@ class TestMessageConversion:
         assert converted["tool_calls"][0]["id"] == "call_123"
         assert converted["tool_calls"][0]["function"]["name"] == "search"
 
-    def test_converts_assistant_tool_call_with_pydantic(
-        self, mock_model: MockChatModel
-    ):
-        class SearchParams(BaseModel):
-            query: str
-            max_results: int
-
-        message = AssistantToolCallMessage(
+    def test_converts_assistant_message_tool_call_arguments(self, mock_model: MockChatModel):
+        message = AssistantMessage(
             content=None,
             tool_calls=[
                 ToolCall(
                     id="call_456",
-                    name="search",
-                    tool=SearchParams(query="test", max_results=10),
+                    function=Function(name="search", arguments='{"query":"test","max_results":10}'),
                 )
             ],
         )
@@ -158,36 +162,41 @@ class TestPlainInvoke:
     @pytest.mark.asyncio
     async def test_returns_text_content(self, mock_model: MockChatModel):
         mock_response = Mock(spec=ChatCompletion)
-        mock_response.choices = [Mock(message=Mock(content="Hello world"))]
+        mock_response.usage = None
+        mock_response.choices = [Mock(message=Mock(content="Hello world"), finish_reason="stop")]
         mock_model._client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
 
-        result = await mock_model.invoke([UserMessage("Hi")])
+        result = await mock_model.invoke([UserMessage(content="Hi")])
 
-        assert result == "Hello world"
+        assert isinstance(result, ChatInvokeCompletion)
+        assert result.completion == "Hello world"
 
     @pytest.mark.asyncio
     async def test_handles_empty_content(self, mock_model: MockChatModel):
         mock_response = Mock(spec=ChatCompletion)
-        mock_response.choices = [Mock(message=Mock(content=None))]
+        mock_response.usage = None
+        mock_response.choices = [Mock(message=Mock(content=None), finish_reason="stop")]
         mock_model._client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
 
-        result = await mock_model.invoke([UserMessage("Hi")])
+        result = await mock_model.invoke([UserMessage(content="Hi")])
 
-        assert result == ""
+        assert isinstance(result, ChatInvokeCompletion)
+        assert result.completion == ""
 
     @pytest.mark.asyncio
     async def test_passes_merged_parameters(self, mock_model: MockChatModel):
         mock_response = Mock(spec=ChatCompletion)
-        mock_response.choices = [Mock(message=Mock(content="Response"))]
+        mock_response.usage = None
+        mock_response.choices = [Mock(message=Mock(content="Response"), finish_reason="stop")]
         mock_model._client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
 
-        await mock_model.invoke([UserMessage("Hi")], temperature=0.7, max_tokens=50)
+        await mock_model.invoke([UserMessage(content="Hi")], temperature=0.7, max_tokens=50)
 
         call_kwargs = mock_model._client.chat.completions.create.call_args.kwargs
         assert call_kwargs["temperature"] == 0.7
@@ -216,13 +225,13 @@ class TestToolInvoke:
         )
 
         result = await mock_model.invoke(
-            [UserMessage("Search for test")], tools=[search_tool]
+            [UserMessage(content="Search for test")], tools=[search_tool]
         )
 
         assert isinstance(result, ModelResponse)
         assert result.content == "Searching..."
         assert len(result.tool_calls) == 1
-        assert result.tool_calls[0].name == "search_web"
+        assert result.tool_calls[0].function.name == "search_web"
         assert result.tool_calls[0].tool == {"query": "test"}
 
     @pytest.mark.asyncio
@@ -236,14 +245,17 @@ class TestToolInvoke:
 
         mock_response = Mock(spec=ChatCompletion)
         mock_response.choices = [
-            Mock(message=Mock(content=None, tool_calls=[mock_tool_call]))
+            Mock(
+                message=Mock(content=None, tool_calls=[mock_tool_call]),
+                finish_reason="tool_calls",
+            )
         ]
         mock_model._client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
 
         with pytest.raises(ValueError, match="Unknown tool: unknown_tool"):
-            await mock_model.invoke([UserMessage("Hi")], tools=[search_tool])
+            await mock_model.invoke([UserMessage(content="Hi")], tools=[search_tool])
 
     @pytest.mark.asyncio
     async def test_handles_no_tool_calls(
@@ -257,7 +269,7 @@ class TestToolInvoke:
             return_value=mock_response
         )
 
-        result = await mock_model.invoke([UserMessage("Hi")], tools=[search_tool])
+        result = await mock_model.invoke([UserMessage(content="Hi")], tools=[search_tool])
 
         assert isinstance(result, ModelResponse)
         assert result.content == "Done"
@@ -269,17 +281,19 @@ class TestStructuredOutput:
     async def test_returns_parsed_pydantic_model(self, mock_model: MockChatModel):
         expected_result = SearchResult(query="test", results=["a", "b"])
         mock_response = Mock()
-        mock_response.choices = [Mock(message=Mock(parsed=expected_result))]
+        mock_response.usage = None
+        mock_response.choices = [Mock(message=Mock(parsed=expected_result), finish_reason="stop")]
         mock_model._client.beta.chat.completions.parse = AsyncMock(
             return_value=mock_response
         )
 
         model_with_schema = mock_model.with_structured_output(SearchResult)
-        result = await model_with_schema.invoke([UserMessage("Search")])
+        result = await model_with_schema.invoke([UserMessage(content="Search")])
 
-        assert isinstance(result, SearchResult)
-        assert result.query == "test"
-        assert result.results == ["a", "b"]
+        assert isinstance(result, ChatInvokeCompletion)
+        assert isinstance(result.completion, SearchResult)
+        assert result.completion.query == "test"
+        assert result.completion.results == ["a", "b"]
 
     def test_with_structured_output_returns_new_instance(
         self, mock_model: MockChatModel
@@ -311,7 +325,7 @@ class TestStreaming:
         )
 
         chunks = []
-        async for chunk in mock_model.stream([UserMessage("Hi")]):
+        async for chunk in mock_model.stream([UserMessage(content="Hi")]):
             chunks.append(chunk)
 
         assert chunks == ["Hello", " world"]
@@ -326,8 +340,9 @@ class TestStreaming:
             return_value=mock_stream()
         )
 
-        async for _ in mock_model.stream([UserMessage("Hi")]):
+        async for _ in mock_model.stream([UserMessage(content="Hi")]):
             pass
 
         call_kwargs = mock_model._client.chat.completions.create.call_args.kwargs
         assert call_kwargs["stream"] is True
+

@@ -1,11 +1,8 @@
 import os
 import httpx
 from openai import AsyncAzureOpenAI
-from llmify.providers.base import BaseOpenAICompatible
+from llmify.providers._base_openai import BaseOpenAICompatible
 from typing import Any
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
 
 
 class ChatAzureOpenAI(BaseOpenAICompatible):
@@ -40,14 +37,9 @@ class ChatAzureOpenAI(BaseOpenAICompatible):
             max_retries=max_retries,
             **kwargs,
         )
-        if api_key is None:
-            api_key = os.getenv("AZURE_OPENAI_API_KEY")
-        if azure_endpoint is None:
-            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-
         self._client = AsyncAzureOpenAI(
-            api_key=api_key,
-            azure_endpoint=azure_endpoint,
+            api_key=api_key or os.getenv("AZURE_OPENAI_API_KEY"),
+            azure_endpoint=azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
             api_version=api_version,
             timeout=timeout,
             max_retries=max_retries,

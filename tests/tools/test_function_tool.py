@@ -1,4 +1,3 @@
-# tests/tools/test_function_tool.py
 from llmify.tools import FunctionTool, tool
 
 
