@@ -67,15 +67,17 @@ class TestMessageConversion:
         assert converted == [{"role": "assistant", "content": "I can help"}]
 
     def test_converts_user_message_with_image(self, mock_model: MockChatModel):
-        message = UserMessage(content=[
-            ContentPartTextParam(text="What's this?"),
-            ContentPartImageParam(
-                image_url=ImageURL(
-                    url="data:image/png;base64,iVBORw0KG...",
-                    media_type="image/png",
-                )
-            ),
-        ])
+        message = UserMessage(
+            content=[
+                ContentPartTextParam(text="What's this?"),
+                ContentPartImageParam(
+                    image_url=ImageURL(
+                        url="data:image/png;base64,iVBORw0KG...",
+                        media_type="image/png",
+                    )
+                ),
+            ]
+        )
         converted = mock_model._convert_single_message(message)
 
         assert converted["role"] == "user"
@@ -94,7 +96,9 @@ class TestMessageConversion:
             "content": "Search completed",
         }
 
-    def test_converts_assistant_message_with_tool_calls(self, mock_model: MockChatModel):
+    def test_converts_assistant_message_with_tool_calls(
+        self, mock_model: MockChatModel
+    ):
         message = AssistantMessage(
             content="Let me search",
             tool_calls=[
@@ -112,13 +116,17 @@ class TestMessageConversion:
         assert converted["tool_calls"][0]["id"] == "call_123"
         assert converted["tool_calls"][0]["function"]["name"] == "search"
 
-    def test_converts_assistant_message_tool_call_arguments(self, mock_model: MockChatModel):
+    def test_converts_assistant_message_tool_call_arguments(
+        self, mock_model: MockChatModel
+    ):
         message = AssistantMessage(
             content=None,
             tool_calls=[
                 ToolCall(
                     id="call_456",
-                    function=Function(name="search", arguments='{"query":"test","max_results":10}'),
+                    function=Function(
+                        name="search", arguments='{"query":"test","max_results":10}'
+                    ),
                 )
             ],
         )
@@ -163,7 +171,9 @@ class TestPlainInvoke:
     async def test_returns_text_content(self, mock_model: MockChatModel):
         mock_response = Mock(spec=ChatCompletion)
         mock_response.usage = None
-        mock_response.choices = [Mock(message=Mock(content="Hello world"), finish_reason="stop")]
+        mock_response.choices = [
+            Mock(message=Mock(content="Hello world"), finish_reason="stop")
+        ]
         mock_model._client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
@@ -191,12 +201,16 @@ class TestPlainInvoke:
     async def test_passes_merged_parameters(self, mock_model: MockChatModel):
         mock_response = Mock(spec=ChatCompletion)
         mock_response.usage = None
-        mock_response.choices = [Mock(message=Mock(content="Response"), finish_reason="stop")]
+        mock_response.choices = [
+            Mock(message=Mock(content="Response"), finish_reason="stop")
+        ]
         mock_model._client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
 
-        await mock_model.invoke([UserMessage(content="Hi")], temperature=0.7, max_tokens=50)
+        await mock_model.invoke(
+            [UserMessage(content="Hi")], temperature=0.7, max_tokens=50
+        )
 
         call_kwargs = mock_model._client.chat.completions.create.call_args.kwargs
         assert call_kwargs["temperature"] == 0.7
@@ -269,7 +283,9 @@ class TestToolInvoke:
             return_value=mock_response
         )
 
-        result = await mock_model.invoke([UserMessage(content="Hi")], tools=[search_tool])
+        result = await mock_model.invoke(
+            [UserMessage(content="Hi")], tools=[search_tool]
+        )
 
         assert isinstance(result, ModelResponse)
         assert result.content == "Done"
@@ -282,7 +298,9 @@ class TestStructuredOutput:
         expected_result = SearchResult(query="test", results=["a", "b"])
         mock_response = Mock()
         mock_response.usage = None
-        mock_response.choices = [Mock(message=Mock(parsed=expected_result), finish_reason="stop")]
+        mock_response.choices = [
+            Mock(message=Mock(parsed=expected_result), finish_reason="stop")
+        ]
         mock_model._client.beta.chat.completions.parse = AsyncMock(
             return_value=mock_response
         )
@@ -345,4 +363,3 @@ class TestStreaming:
 
         call_kwargs = mock_model._client.chat.completions.create.call_args.kwargs
         assert call_kwargs["stream"] is True
-

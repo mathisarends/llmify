@@ -5,7 +5,9 @@ import httpx
 from pydantic import BaseModel
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
-from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
+from openai.types.chat.chat_completion_message_tool_call import (
+    ChatCompletionMessageToolCall,
+)
 from llmify.messages import (
     AssistantMessage,
     ContentPartImageParam,
@@ -22,7 +24,16 @@ from llmify.views import ChatInvokeCompletion, ChatInvokeUsage
 
 T = TypeVar("T", bound=BaseModel)
 
-_KNOWN_PARAM_KEYS = {"max_tokens", "temperature", "top_p", "frequency_penalty", "presence_penalty", "stop", "seed", "response_format"}
+_KNOWN_PARAM_KEYS = {
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "frequency_penalty",
+    "presence_penalty",
+    "stop",
+    "seed",
+    "response_format",
+}
 
 
 class BaseOpenAICompatible(ABC):
@@ -97,7 +108,9 @@ class BaseOpenAICompatible(ABC):
         response_model: type[Any] | None = None,
         **kwargs: Any,
     ) -> ChatInvokeCompletion[str] | ChatInvokeCompletion[Any] | ModelResponse:
-        params = self._merge_params({"max_tokens": max_tokens, "temperature": temperature, **kwargs})
+        params = self._merge_params(
+            {"max_tokens": max_tokens, "temperature": temperature, **kwargs}
+        )
         converted = self._convert_messages(messages)
 
         if response_model is not None:
@@ -106,39 +119,102 @@ class BaseOpenAICompatible(ABC):
             return await self._invoke_with_tools(converted, tools, params, tool_choice)
         return await self._invoke_plain(converted, params)
 
-    async def stream(self, messages: list[Message], max_tokens: int | None = None, temperature: float | None = None, **kwargs: Any) -> AsyncIterator[str]:
-        params = self._merge_params({"max_tokens": max_tokens, "temperature": temperature, **kwargs})
-        stream = await self._client.chat.completions.create(model=self._model, messages=self._convert_messages(messages), stream=True, **params)
+    async def stream(
+        self,
+        messages: list[Message],
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[str]:
+        params = self._merge_params(
+            {"max_tokens": max_tokens, "temperature": temperature, **kwargs}
+        )
+        stream = await self._client.chat.completions.create(
+            model=self._model,
+            messages=self._convert_messages(messages),
+            stream=True,
+            **params,
+        )
         chunk: ChatCompletionChunk
         async for chunk in stream:
             if content := chunk.choices[0].delta.content:
                 yield content
 
-    async def _invoke_plain(self, messages: list[dict], params: dict[str, Any]) -> ChatInvokeCompletion[str]:
-        response: ChatCompletion = await self._client.chat.completions.create(model=self._model, messages=messages, **params)
+    async def _invoke_plain(
+        self, messages: list[dict], params: dict[str, Any]
+    ) -> ChatInvokeCompletion[str]:
+        response: ChatCompletion = await self._client.chat.completions.create(
+            model=self._model, messages=messages, **params
+        )
         choice = response.choices[0]
-        return ChatInvokeCompletion(completion=choice.message.content or "", usage=self._extract_usage(response), stop_reason=choice.finish_reason)
+        return ChatInvokeCompletion(
+            completion=choice.message.content or "",
+            usage=self._extract_usage(response),
+            stop_reason=choice.finish_reason,
+        )
 
-    async def _invoke_structured(self, messages: list[dict], params: dict[str, Any], response_model: type[T]) -> ChatInvokeCompletion[T]:
-        response = await self._client.beta.chat.completions.parse(model=self._model, messages=messages, response_format=response_model, **params)
+    async def _invoke_structured(
+        self, messages: list[dict], params: dict[str, Any], response_model: type[T]
+    ) -> ChatInvokeCompletion[T]:
+        response = await self._client.beta.chat.completions.parse(
+            model=self._model,
+            messages=messages,
+            response_format=response_model,
+            **params,
+        )
         choice = response.choices[0]
-        return ChatInvokeCompletion(completion=choice.message.parsed, usage=self._extract_usage(response), stop_reason=choice.finish_reason)
+        return ChatInvokeCompletion(
+            completion=choice.message.parsed,
+            usage=self._extract_usage(response),
+            stop_reason=choice.finish_reason,
+        )
 
-    async def _invoke_with_tools(self, messages: list[dict], tools: list[Tool | dict], params: dict[str, Any], tool_choice: Literal["auto", "required", "none"]) -> ModelResponse:
-        openai_tools = [t if isinstance(t, dict) else t.to_openai_schema() for t in tools]
+    async def _invoke_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[Tool | dict],
+        params: dict[str, Any],
+        tool_choice: Literal["auto", "required", "none"],
+    ) -> ModelResponse:
+        openai_tools = [
+            t if isinstance(t, dict) else t.to_openai_schema() for t in tools
+        ]
         tool_registry = {t.name: t for t in tools if not isinstance(t, dict)}
-        response: ChatCompletion = await self._client.chat.completions.create(model=self._model, messages=messages, tools=openai_tools, tool_choice=tool_choice, **params)
+        response: ChatCompletion = await self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            tools=openai_tools,
+            tool_choice=tool_choice,
+            **params,
+        )
         choice = response.choices[0]
-        return ModelResponse(content=choice.message.content, tool_calls=self._parse_tool_calls(choice.message.tool_calls, tool_registry), finish_reason=choice.finish_reason)
+        return ModelResponse(
+            content=choice.message.content,
+            tool_calls=self._parse_tool_calls(choice.message.tool_calls, tool_registry),
+            finish_reason=choice.finish_reason,
+        )
 
-    def _parse_tool_calls(self, raw: list[ChatCompletionMessageToolCall] | None, registry: dict[str, Tool]) -> list[ToolCall]:
+    def _parse_tool_calls(
+        self, raw: list[ChatCompletionMessageToolCall] | None, registry: dict[str, Tool]
+    ) -> list[ToolCall]:
         if not raw:
             return []
         result = []
         for tc in raw:
             if tc.function.name not in registry:
                 raise ValueError(f"Unknown tool: {tc.function.name}")
-            result.append(ToolCall(id=tc.id, function={"name": tc.function.name, "arguments": tc.function.arguments}, tool=registry[tc.function.name].parse_arguments(tc.function.arguments)))
+            result.append(
+                ToolCall(
+                    id=tc.id,
+                    function={
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                    tool=registry[tc.function.name].parse_arguments(
+                        tc.function.arguments
+                    ),
+                )
+            )
         return result
 
     def _convert_messages(self, messages: list[Message]) -> list[dict]:
@@ -146,19 +222,50 @@ class BaseOpenAICompatible(ABC):
 
     def _convert_message(self, msg: Message) -> dict:
         if isinstance(msg, ToolResultMessage):
-            return {"role": "tool", "tool_call_id": msg.tool_call_id, "content": msg.content}
+            return {
+                "role": "tool",
+                "tool_call_id": msg.tool_call_id,
+                "content": msg.content,
+            }
         if isinstance(msg, AssistantMessage) and msg.has_tool_calls:
-            return {"role": "assistant", "content": msg.content, "tool_calls": [{"id": tc.id, "type": tc.type, "function": {"name": tc.function.name, "arguments": tc.function.arguments}} for tc in msg.tool_calls]}
+            return {
+                "role": "assistant",
+                "content": msg.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ],
+            }
         if isinstance(msg, AssistantMessage):
             return {"role": "assistant", "content": msg.content}
         if isinstance(msg, UserMessage) and isinstance(msg.content, list):
             return {"role": "user", "content": self._convert_parts(msg.content)}
         if isinstance(msg, UserMessage):
             return {"role": "user", "content": msg.content}
-        return {"role": msg.role, "content": msg.text if isinstance(msg, SystemMessage) else msg.content}  # type: ignore[union-attr]
+        return {
+            "role": msg.role,
+            "content": msg.text if isinstance(msg, SystemMessage) else msg.content,
+        }  # type: ignore[union-attr]
 
-    def _convert_parts(self, parts: list[ContentPartTextParam | ContentPartImageParam]) -> list[dict]:
-        return [{"type": "text", "text": p.text} if isinstance(p, ContentPartTextParam) else {"type": "image_url", "image_url": {"url": p.image_url.url, "detail": p.image_url.detail}} for p in parts]
+    def _convert_parts(
+        self, parts: list[ContentPartTextParam | ContentPartImageParam]
+    ) -> list[dict]:
+        return [
+            {"type": "text", "text": p.text}
+            if isinstance(p, ContentPartTextParam)
+            else {
+                "type": "image_url",
+                "image_url": {"url": p.image_url.url, "detail": p.image_url.detail},
+            }
+            for p in parts
+        ]
 
     def _merge_params(self, overrides: dict[str, Any]) -> dict[str, Any]:
         params = {**self._extra_defaults}
@@ -177,7 +284,9 @@ class BaseOpenAICompatible(ABC):
         details = getattr(response.usage, "prompt_tokens_details", None)
         return ChatInvokeUsage(
             prompt_tokens=response.usage.prompt_tokens,
-            prompt_cached_tokens=getattr(details, "cached_tokens", None) if details else None,
+            prompt_cached_tokens=getattr(details, "cached_tokens", None)
+            if details
+            else None,
             completion_tokens=response.usage.completion_tokens,
             total_tokens=response.usage.total_tokens,
         )

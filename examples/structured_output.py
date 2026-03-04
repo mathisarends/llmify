@@ -6,10 +6,12 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+
 class Person(BaseModel):
     name: str
     age: int
     occupation: str
+
 
 async def main():
     llm = ChatAzureOpenAI(
@@ -18,11 +20,18 @@ async def main():
         azure_endpoint=os.getenv("AZURE_ENDPOINT"),
     )
     response = await llm.invoke(
-        [UserMessage(content="Extract: Anna is 28 years old and works as a Software Engineer")],
+        [
+            UserMessage(
+                content="Extract: Anna is 28 years old and works as a Software Engineer"
+            )
+        ],
         response_model=Person,
     )
 
-    print(f"Name: {response.completion.name}, Age: {response.completion.age}, Job: {response.completion.occupation}")
+    print(
+        f"Name: {response.completion.name}, Age: {response.completion.age}, Job: {response.completion.occupation}"
+    )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -38,15 +38,20 @@ class ImageURL(BaseModel):
     media_type: SupportedImageMediaType = "image/png"
 
     def __str__(self) -> str:
-        url_display = "<base64>" if self.url.startswith("data:") else _truncate(self.url)
+        url_display = (
+            "<base64>" if self.url.startswith("data:") else _truncate(self.url)
+        )
         return f"🖼️  Image[{self.media_type}, detail={self.detail}]: {url_display}"
 
     def __repr__(self) -> str:
-        url_display = "<base64>" if self.url.startswith("data:") else _truncate(self.url, 30)
+        url_display = (
+            "<base64>" if self.url.startswith("data:") else _truncate(self.url, 30)
+        )
         return (
             f"ImageURL(url={repr(url_display)}, "
             f"detail={repr(self.detail)}, media_type={repr(self.media_type)})"
         )
+
 
 class ContentPartImageParam(BaseModel):
     image_url: ImageURL
@@ -123,6 +128,7 @@ class UserMessage(_MessageBase):
     def __repr__(self) -> str:
         return f"UserMessage(content={repr(_truncate(self.text))})"
 
+
 class AssistantMessage(_MessageBase):
     role: _MessageRole = _MessageRole.ASSISTANT
     content: str | list[ContentPartTextParam] | None = None
@@ -185,5 +191,6 @@ class ModelResponse(BaseModel):
             f"ModelResponse(finish_reason={repr(self.finish_reason)}, "
             f"tool_calls={repr(self.tool_calls)}, content={repr(_truncate(self.content or ''))})"
         )
+
 
 type Message = UserMessage | SystemMessage | AssistantMessage | ToolResultMessage

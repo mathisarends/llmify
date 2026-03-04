@@ -1,4 +1,10 @@
-from llmify import UserMessage, SystemMessage, ContentPartTextParam, ContentPartImageParam, ImageURL
+from llmify import (
+    UserMessage,
+    SystemMessage,
+    ContentPartTextParam,
+    ContentPartImageParam,
+    ImageURL,
+)
 
 
 def test_user_message():
@@ -14,12 +20,16 @@ def test_system_message():
 
 
 def test_user_message_with_image_and_text():
-    msg = UserMessage(content=[
-        ContentPartTextParam(text="What is this?"),
-        ContentPartImageParam(
-            image_url=ImageURL(url="data:image/png;base64,abc123", media_type="image/png")
-        ),
-    ])
+    msg = UserMessage(
+        content=[
+            ContentPartTextParam(text="What is this?"),
+            ContentPartImageParam(
+                image_url=ImageURL(
+                    url="data:image/png;base64,abc123", media_type="image/png"
+                )
+            ),
+        ]
+    )
     assert msg.role == "user"
     assert msg.text == "What is this?"
     assert isinstance(msg.content, list)

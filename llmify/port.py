@@ -40,5 +40,4 @@ class BaseChatModel(Protocol):
         self,
         messages: list[Message],
         **kwargs: Any,
-    ) -> AsyncIterator[str]:
-        ...
+    ) -> AsyncIterator[str]: ...
