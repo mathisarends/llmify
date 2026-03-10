@@ -1,6 +1,9 @@
 import asyncio
 from llmify import ChatOpenAI, UserMessage
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 
 class Person(BaseModel):
@@ -12,12 +15,16 @@ class Person(BaseModel):
 async def main():
     llm = ChatOpenAI(model="gpt-4o")
 
-    structured_llm = llm.with_structured_output(Person)
-
-    person: Person = await structured_llm.invoke(
-        [UserMessage("Extract: Anna is 28 years old and works as a Software Engineer")]
+    response = await llm.invoke(
+        [
+            UserMessage(
+                content="Extract: Anna is 28 years old and works as a Software Engineer"
+            )
+        ],
+        output_format=Person,
     )
 
+    person = response.completion
     print(f"Name: {person.name}, Age: {person.age}, Job: {person.occupation}")
 
 

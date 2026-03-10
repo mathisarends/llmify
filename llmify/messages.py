@@ -1,117 +1,197 @@
-import base64
-from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel
 
 
+def _truncate(text: str, max_length: int = 50) -> str:
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3] + "..."
+
+
+class ContentPartTextParam(BaseModel):
+    text: str
+    type: Literal["text"] = "text"
+
+    def __str__(self) -> str:
+        return f"Text: {_truncate(self.text)}"
+
+    def __repr__(self) -> str:
+        return f"ContentPartTextParam(text={_truncate(self.text)})"
+
+
+class ContentPartRefusalParam(BaseModel):
+    refusal: str
+    type: Literal["refusal"] = "refusal"
+
+    def __str__(self) -> str:
+        return f"Refusal: {_truncate(self.refusal)}"
+
+    def __repr__(self) -> str:
+        return f"ContentPartRefusalParam(refusal={_truncate(repr(self.refusal), 50)})"
+
+
+SupportedImageMediaType = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
+
+
+class ImageURL(BaseModel):
+    url: str
+    detail: Literal["auto", "low", "high"] = "auto"
+    # needed for Anthropic
+    media_type: SupportedImageMediaType = "image/png"
+
+    @staticmethod
+    def _format_url(url: str, max_length: int = 50) -> str:
+        if url.startswith("data:"):
+            media_type = url.split(";")[0].split(":")[1] if ";" in url else "image"
+            return f"<base64 {media_type}>"
+        return _truncate(url, max_length)
+
+    def __str__(self) -> str:
+        url_display = self._format_url(self.url)
+        return f"🖼️  Image[{self.media_type}, detail={self.detail}]: {url_display}"
+
+    def __repr__(self) -> str:
+        url_repr = self._format_url(self.url, 30)
+        return f"ImageURL(url={repr(url_repr)}, detail={repr(self.detail)}, media_type={repr(self.media_type)})"
+
+
+class ContentPartImageParam(BaseModel):
+    image_url: ImageURL
+    type: Literal["image_url"] = "image_url"
+
+    def __str__(self) -> str:
+        return str(self.image_url)
+
+    def __repr__(self) -> str:
+        return f"ContentPartImageParam(image_url={repr(self.image_url)})"
+
+
+class Function(BaseModel):
+    arguments: str
+    name: str
+
+    def __str__(self) -> str:
+        args_preview = _truncate(self.arguments, 80)
+        return f"{self.name}({args_preview})"
+
+    def __repr__(self) -> str:
+        args_repr = _truncate(repr(self.arguments), 50)
+        return f"Function(name={repr(self.name)}, arguments={args_repr})"
+
+
+class ToolCall(BaseModel):
+    id: str
+    function: Function
+    type: Literal["function"] = "function"
+
+    def __str__(self) -> str:
+        return f"ToolCall[{self.id}]: {self.function}"
+
+    def __repr__(self) -> str:
+        return f"ToolCall(id={repr(self.id)}, function={repr(self.function)})"
+
+
 class _MessageRole(StrEnum):
-    SYSTEM = "system"
     USER = "user"
+    SYSTEM = "system"
     ASSISTANT = "assistant"
     TOOL = "tool"
 
 
-_MediaType = Literal["image/jpeg", "image/png"]
-
-
-@dataclass
-class Message:
+class _MessageBase(BaseModel):
     role: _MessageRole
-    content: str
+
+    cache: bool = False
+    """Whether to cache this message. This is only applicable when using Anthropic models."""
 
 
-class SystemMessage(Message):
-    def __init__(self, content: str):
-        super().__init__(role=_MessageRole.SYSTEM, content=content)
-
-
-class UserMessage(Message):
-    def __init__(self, content: str):
-        super().__init__(role=_MessageRole.USER, content=content)
-
-
-class AssistantMessage(Message):
-    def __init__(self, content: str):
-        super().__init__(role=_MessageRole.ASSISTANT, content=content)
-
-
-_DetailLevel = Literal["low", "high", "auto"]
-
-
-@dataclass
-class ImageMessage(Message):
-    base64_data: str
-    media_type: _MediaType
-    detail: _DetailLevel = "auto"
-
-    def __init__(
-        self,
-        base64_data: str,
-        media_type: _MediaType | None = None,
-        text: str | None = None,
-        detail: _DetailLevel = "auto",
-    ):
-        self.base64_data = base64_data
-        self.detail = detail
-
-        if media_type is None:
-            self.media_type = self._detect_media_type(base64_data)
-        else:
-            self.media_type = media_type
-
-        super().__init__(role=_MessageRole.USER, content=text or "")
-
-    @staticmethod
-    def _detect_media_type(base64_data: str) -> _MediaType:
-        try:
-            header = base64.b64decode(base64_data[:20])
-            if header.startswith(b"\x89PNG"):
-                return "image/png"
-        except Exception:
-            pass
-        return "image/jpeg"
-
-
-@dataclass
-class ToolResultMessage(Message):
-    tool_call_id: str
-
-    def __init__(self, tool_call_id: str, content: str):
-        self.tool_call_id = tool_call_id
-        super().__init__(role=_MessageRole.TOOL, content=content)
-
-
-@dataclass
-class AssistantToolCallMessage(Message):
-    tool_calls: list["ToolCall"]
-
-    def __init__(self, content: str | None, tool_calls: list["ToolCall"]):
-        self.tool_calls = tool_calls
-        super().__init__(role=_MessageRole.ASSISTANT, content=content or "")
-
-
-@dataclass
-class ToolCall:
-    id: str
-    name: str
-    tool: BaseModel
-
-
-@dataclass
-class ModelResponse:
-    content: str | None
-    tool_calls: list[ToolCall]
-    finish_reason: Literal["stop", "tool_calls", "length", "content_filter"]
+class UserMessage(_MessageBase):
+    role: _MessageRole = _MessageRole.USER
+    content: str | list[ContentPartTextParam | ContentPartImageParam]
+    name: str | None = None
 
     @property
-    def has_tool_calls(self) -> bool:
-        return len(self.tool_calls) > 0
-
-    def to_message(self) -> Message:
-        if self.has_tool_calls:
-            return AssistantToolCallMessage(
-                content=self.content, tool_calls=self.tool_calls
+    def text(self) -> str:
+        if isinstance(self.content, str):
+            return self.content
+        elif isinstance(self.content, list):
+            return "\n".join(
+                [part.text for part in self.content if part.type == "text"]
             )
-        return AssistantMessage(content=self.content or "")
+        else:
+            return ""
+
+    def __str__(self) -> str:
+        return f"UserMessage(content={self.text})"
+
+    def __repr__(self) -> str:
+        return f"UserMessage(content={repr(self.text)})"
+
+
+class SystemMessage(_MessageBase):
+    role: _MessageRole = _MessageRole.SYSTEM
+    content: str | list[ContentPartTextParam]
+    name: str | None = None
+
+    @property
+    def text(self) -> str:
+        if isinstance(self.content, str):
+            return self.content
+        elif isinstance(self.content, list):
+            return "\n".join(
+                [part.text for part in self.content if part.type == "text"]
+            )
+        else:
+            return ""
+
+    def __str__(self) -> str:
+        return f"SystemMessage(content={self.text})"
+
+    def __repr__(self) -> str:
+        return f"SystemMessage(content={repr(self.text)})"
+
+
+class AssistantMessage(_MessageBase):
+    role: _MessageRole = _MessageRole.ASSISTANT
+    content: str | list[ContentPartTextParam | ContentPartRefusalParam] | None = None
+    name: str | None = None
+    refusal: str | None = None
+    tool_calls: list[ToolCall] = []
+
+    @property
+    def text(self) -> str:
+        if isinstance(self.content, str):
+            return self.content
+        elif isinstance(self.content, list):
+            text = ""
+            for part in self.content:
+                if part.type == "text":
+                    text += part.text
+                elif part.type == "refusal":
+                    text += f"[Refusal] {part.refusal}"
+            return text
+        else:
+            return ""
+
+    def __str__(self) -> str:
+        return f"AssistantMessage(content={self.text})"
+
+    def __repr__(self) -> str:
+        return f"AssistantMessage(content={repr(self.text)})"
+
+
+class ToolResultMessage(_MessageBase):
+    role: _MessageRole = _MessageRole.TOOL
+    tool_call_id: str
+    content: str
+
+    def __str__(self) -> str:
+        return f"ToolResultMessage(tool_call_id={self.tool_call_id}, content={_truncate(self.content)})"
+
+    def __repr__(self) -> str:
+        return f"ToolResultMessage(tool_call_id={repr(self.tool_call_id)}, content={repr(_truncate(self.content))})"
+
+
+type Message = UserMessage | SystemMessage | AssistantMessage | ToolResultMessage

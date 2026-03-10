@@ -3,9 +3,6 @@ import httpx
 from openai import AsyncOpenAI
 from llmify.providers.base import BaseOpenAICompatible
 from typing import Any
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
 
 
 class ChatOpenAI(BaseOpenAICompatible):
@@ -23,7 +20,7 @@ class ChatOpenAI(BaseOpenAICompatible):
         response_format: dict | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
-        default_headers: dict | None = None,
+        default_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ):
         super().__init__(

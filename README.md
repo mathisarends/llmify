@@ -1,21 +1,24 @@
 # llmify
 
-A lightweight, type-safe Python library for LLM chat completions. Inspired by LangChain's message API but simpler and less opinionated.
+A lightweight, type-safe Python library for LLM chat completions.
 
 **Features:**
-- 🎯 Simple, intuitive API for OpenAI and Azure OpenAI
-- 📝 Type-safe structured outputs with Pydantic
-- 🛠️ Built-in tool calling support
-- 🌊 Async streaming
-- 🖼️ Image analysis support
-- ⚡ Minimal dependencies, maximum flexibility
+
+- Simple, intuitive API for OpenAI and Azure OpenAI
+- Type-safe structured outputs with Pydantic
+- Built-in tool calling support
+- Async streaming
+- Image analysis support
+- Minimal dependencies, maximum flexibility
 
 ## Installation
+
 ```bash
 pip install py-llmify
 ```
 
 ## Quick Start
+
 ```python
 import asyncio
 from llmify import ChatOpenAI, UserMessage, SystemMessage
@@ -24,34 +27,62 @@ async def main():
     llm = ChatOpenAI(model="gpt-4o")
 
     response = await llm.invoke([
-        SystemMessage("You are a helpful assistant"),
-        UserMessage("What is 2+2?")
+        SystemMessage(content="You are a helpful assistant"),
+        UserMessage(content="What is 2+2?")
     ])
 
-    print(response)  # "2+2 equals 4"
+    print(response.completion)  # "2+2 equals 4"
 
 asyncio.run(main())
 ```
+
+All `invoke` calls return a `ChatInvokeCompletion[T]` with:
+
+- `completion` — the text (or parsed Pydantic model) returned by the model
+- `tool_calls` — list of `ToolCall` objects, if any
+- `usage` — token usage (`ChatInvokeUsage`)
+- `stop_reason` — why the model stopped
 
 ## Core Features
 
 ### Message Types
 
-llmify provides LangChain-style message types for clean conversation management:
 ```python
-from llmify import SystemMessage, UserMessage, AssistantMessage, ImageMessage
+from llmify import SystemMessage, UserMessage, AssistantMessage, ToolResultMessage
 
 messages = [
-    SystemMessage("You are a Python expert"),
-    UserMessage("How do I read a file?"),
-    AssistantMessage("You can use open() with a context manager"),
-    UserMessage("Show me an example")
+    SystemMessage(content="You are a Python expert"),
+    UserMessage(content="How do I read a file?"),
+    AssistantMessage(content="You can use open() with a context manager"),
+    UserMessage(content="Show me an example"),
 ]
+```
+
+#### Image messages
+
+Pass images inline inside a `UserMessage` using content parts:
+
+```python
+from llmify import UserMessage, ContentPartTextParam, ContentPartImageParam, ImageURL
+
+message = UserMessage(
+    content=[
+        ContentPartTextParam(text="What's in this image?"),
+        ContentPartImageParam(
+            image_url=ImageURL(
+                url="data:image/jpeg;base64,<base64data>",
+                media_type="image/jpeg",
+                detail="high",
+            )
+        ),
+    ]
+)
 ```
 
 ### Structured Outputs
 
-Get type-safe, validated responses using Pydantic models:
+Pass `output_format` to get a validated Pydantic model back:
+
 ```python
 from pydantic import BaseModel
 from llmify import ChatOpenAI, UserMessage
@@ -64,105 +95,129 @@ class Person(BaseModel):
 async def main():
     llm = ChatOpenAI(model="gpt-4o")
 
-    structured_llm = llm.with_structured_output(Person)
-    person = await structured_llm.invoke([
-        UserMessage("Extract: John is 32 and works as a data scientist")
-    ])
+    response = await llm.invoke(
+        [UserMessage(content="Extract: John is 32 and works as a data scientist")],
+        output_format=Person,
+    )
 
+    person = response.completion  # type: Person
     print(f"{person.name}, {person.age}, {person.occupation}")
-    # Output: John, 32, data scientist
+    # John, 32, data scientist
 
 asyncio.run(main())
 ```
 
 ### Tool Calling
 
-Define tools using simple Python functions with the `@tool` decorator:
+#### `@tool` decorator
+
+Define tools from plain Python functions:
+
 ```python
-from llmify import ChatOpenAI, UserMessage, ToolResultMessage, tool
+import json
+from llmify import ChatOpenAI, UserMessage, AssistantMessage, ToolResultMessage, tool
 
 @tool
 def get_weather(location: str, unit: str = "celsius") -> str:
     """Get current weather for a location"""
     return f"Weather in {location}: 22°{unit[0].upper()}, Sunny"
 
-@tool
-def search_web(query: str, max_results: int = 5) -> str:
-    """Search the web"""
-    return f"Found {max_results} results for '{query}'"
-
 async def main():
     llm = ChatOpenAI(model="gpt-4o")
-    tools = [get_weather, search_web]
+    messages = [UserMessage(content="What's the weather in Paris?")]
 
-    # Initial request
-    messages = [UserMessage("What's the weather in Paris?")]
-    response = await llm.invoke(messages, tools=tools)
+    response = await llm.invoke(messages, tools=[get_weather])
 
-    # Handle tool calls
-    if response.has_tool_calls:
-        messages.append(response.to_message())
+    if response.tool_calls:
+        tc = response.tool_calls[0]
+        args = json.loads(tc.function.arguments)
+        result = get_weather(**args)
 
-        for tool_call in response.tool_calls:
-            # Execute the tool
-            result = tool_call.execute()
+        messages.append(AssistantMessage(content=response.completion, tool_calls=response.tool_calls))
+        messages.append(ToolResultMessage(tool_call_id=tc.id, content=result))
 
-            # Add result to conversation
-            messages.append(ToolResultMessage(
-                tool_call_id=tool_call.id,
-                content=result
-            ))
-
-        # Get final response
-        final = await llm.invoke(messages, tools=tools)
-        print(final.content)
+        final = await llm.invoke(messages)
+        print(final.completion)
 
 asyncio.run(main())
 ```
 
-**Key Points:**
-- Type hints are automatically converted to JSON schema
-- Tools are just decorated Python functions
-- Built-in tool execution with `.execute()`
+#### `RawSchemaTool`
+
+Use a raw JSON schema when you need full control over the tool definition:
+
+```python
+import json
+from llmify import ChatOpenAI, UserMessage, AssistantMessage, ToolResultMessage, RawSchemaTool
+
+search_tool = RawSchemaTool(
+    name="search_web",
+    description="Search the web for information",
+    schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "max_results": {"type": "integer", "default": 5},
+        },
+        "required": ["query"],
+    },
+)
+
+async def main():
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    messages = [UserMessage(content="Search for Python 3.13 features")]
+
+    response = await llm.invoke(messages, tools=[search_tool])
+
+    if response.tool_calls:
+        tc = response.tool_calls[0]
+        args = json.loads(tc.function.arguments)
+        result = my_search_fn(**args)
+
+        messages.append(AssistantMessage(content=response.completion, tool_calls=response.tool_calls))
+        messages.append(ToolResultMessage(tool_call_id=tc.id, content=result))
+
+        final = await llm.invoke(messages)
+        print(final.completion)
+
+asyncio.run(main())
+```
+
+#### Dict schema
+
+Pass raw OpenAI-style tool dicts directly:
+
+```python
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the current weather",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"},
+                },
+                "required": ["city"],
+            },
+        },
+    }
+]
+
+response = await llm.invoke(messages, tools=tools)
+print(response.tool_calls[0].function.name)
+print(json.loads(response.tool_calls[0].function.arguments))
+```
 
 ### Streaming
 
-Stream responses token-by-token as they're generated:
 ```python
 async def main():
     llm = ChatOpenAI(model="gpt-4o")
 
-    async for chunk in llm.stream([
-        UserMessage("Write a haiku about Python")
-    ]):
+    async for chunk in llm.stream([UserMessage(content="Write a haiku about Python")]):
         print(chunk, end="", flush=True)
-
-asyncio.run(main())
-```
-
-### Image Analysis
-
-Analyze images using vision models:
-```python
-import base64
-from llmify import ChatOpenAI, ImageMessage
-
-async def main():
-    llm = ChatOpenAI(model="gpt-4o")
-
-    # Load and encode image
-    with open("photo.jpg", "rb") as f:
-        image_data = base64.b64encode(f.read()).decode('utf-8')
-
-    response = await llm.invoke([
-        ImageMessage(
-            base64_data=image_data,
-            media_type="image/jpeg",
-            text="What's in this image?"
-        )
-    ])
-
-    print(response)
 
 asyncio.run(main())
 ```
@@ -170,82 +225,65 @@ asyncio.run(main())
 ## Configuration
 
 ### Environment Variables
+
 ```bash
 # OpenAI
 export OPENAI_API_KEY="sk-..."
 
 # Azure OpenAI
 export AZURE_OPENAI_API_KEY="..."
-export AZURE_OPENAI_ENDPOINT="https://.openai.azure.com/"
+export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com/"
 ```
 
 ### Model Parameters
 
 Set defaults when initializing or override per request:
+
 ```python
-# Set defaults
 llm = ChatOpenAI(
     model="gpt-4o",
     temperature=0.7,
-    max_tokens=1000
+    max_tokens=1000,
 )
 
-# Override per request
 response = await llm.invoke(
-    messages=[UserMessage("Hi")],
-    temperature=0.2,  # More deterministic
-    max_tokens=500
+    messages=[UserMessage(content="Hi")],
+    temperature=0.2,
+    max_tokens=500,
 )
 ```
 
-**Supported Parameters:**
-- `temperature` - Creativity (0-2)
-- `max_tokens` - Maximum response length
-- `top_p` - Nucleus sampling
-- `frequency_penalty` - Reduce repetition
-- `presence_penalty` - Encourage diversity
-- `stop` - Stop sequences
-- `seed` - Deterministic outputs
+Supported parameters: `temperature`, `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`.
 
 ## Providers
 
 ### OpenAI
+
 ```python
 from llmify import ChatOpenAI
 
 llm = ChatOpenAI(
     model="gpt-4o",
-    api_key="sk-..."  # Optional if using env var
+    api_key="sk-...",  # optional if OPENAI_API_KEY is set
+    base_url="https://...",  # optional, for OpenAI-compatible APIs
 )
 ```
 
 ### Azure OpenAI
+
 ```python
 from llmify import ChatAzureOpenAI
 
 llm = ChatAzureOpenAI(
     model="gpt-4o",
-    api_key="...",  # Optional if using env var
-    azure_endpoint="https://.openai.azure.com/"  # Optional if using env var
+    api_key="...",           # optional if AZURE_OPENAI_API_KEY is set
+    azure_endpoint="https://<resource>.openai.azure.com/",  # optional if env var is set
 )
 ```
 
 ## Design Philosophy
 
-**LangChain-Inspired, but Simpler**
-- Familiar message API (`SystemMessage`, `UserMessage`)
-- Same interface across providers
-- Less opinionated, more flexible
-
-**Lightweight & Focused**
-- Thin wrapper around official SDKs
-- Minimal dependencies
-- No unnecessary abstractions
-
-**Type-Safe & Modern**
-- Full type hints for IDE support
-- Pydantic for validation
-- Async-first design
+Thin wrapper around official SDKs with minimal dependencies and no unnecessary abstractions. Full type hints throughout, Pydantic for all messages and responses, async-first.
 
 ## License
 

@@ -3,9 +3,6 @@ import httpx
 from openai import AsyncAzureOpenAI
 from llmify.providers.base import BaseOpenAICompatible
 from typing import Any
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
 
 
 class ChatAzureOpenAI(BaseOpenAICompatible):
