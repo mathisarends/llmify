@@ -1,6 +1,10 @@
 import asyncio
+import json
 from llmify import ChatOpenAI
 from llmify.messages import UserMessage
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 
 async def main():
@@ -28,12 +32,12 @@ async def main():
         }
     ]
 
-    messages = [UserMessage("Wie ist das Wetter in Münster?")]
+    messages = [UserMessage(content="Wie ist das Wetter in Münster?")]
     response = await llm.invoke(messages, tools=tools)
 
-    print(f"Content: {response.content}")
+    print(f"Content: {response.completion}")
     for tc in response.tool_calls:
-        print(f"Tool: {tc.name}, Args: {tc.tool}")
+        print(f"Tool: {tc.function.name}, Args: {json.loads(tc.function.arguments)}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,9 @@
 import inspect
 import json
-from typing import Any, Callable, get_type_hints
+from typing import Any, Callable, get_type_hints, overload
+
+
+type _AnyCallable = Callable[..., Any]
 
 
 class FunctionTool:
@@ -101,34 +104,32 @@ class FunctionTool:
     def parse_arguments(self, arguments: str) -> dict[str, Any]:
         return json.loads(arguments)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._fn(*args, **kwargs)
 
 
+@overload
+def tool(fn: _AnyCallable) -> FunctionTool: ...
+
+
+@overload
 def tool(
-    fn: Callable | None = None,
+    fn: None = None,
     *,
     name: str | None = None,
     description: str | None = None,
-) -> FunctionTool:
-    """Decorator to convert a function into a FunctionTool.
+) -> Callable[[_AnyCallable], FunctionTool]: ...
 
-    Example:
-        @tool
-        def search_web(query: str, max_results: int = 10) -> str:
-            '''Search the web for information'''
-            return f"Searching for: {query}"
 
-        # Or with custom name/description:
-        @tool(name="web_search", description="Custom description")
-        def search(query: str) -> str:
-            return f"Searching: {query}"
-    """
-
-    def decorator(func: Callable) -> FunctionTool:
+def tool(
+    fn: _AnyCallable | None = None,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+) -> FunctionTool | Callable[[_AnyCallable], FunctionTool]:
+    def decorator(func: _AnyCallable) -> FunctionTool:
         return FunctionTool(func, name=name, description=description)
 
     if fn is None:
         return decorator
-    else:
-        return decorator(fn)
+    return decorator(fn)

@@ -1,5 +1,14 @@
 import asyncio
-from llmify import ChatOpenAI, UserMessage, ImageMessage
+from llmify import (
+    ChatOpenAI,
+    UserMessage,
+    ContentPartImageParam,
+    ContentPartTextParam,
+    ImageURL,
+)
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 
 async def main():
@@ -9,14 +18,22 @@ async def main():
 
     response = await llm.invoke(
         [
-            UserMessage("What color is this image?"),
-            ImageMessage(
-                base64_data=red_pixel_base64, media_type="image/png", detail="high"
-            ),
+            UserMessage(
+                content=[
+                    ContentPartTextParam(text="What color is this image?"),
+                    ContentPartImageParam(
+                        image_url=ImageURL(
+                            url=f"data:image/png;base64,{red_pixel_base64}",
+                            media_type="image/png",
+                            detail="high",
+                        )
+                    ),
+                ]
+            )
         ]
     )
 
-    print(f"Image analysis: {response}")
+    print(f"Image analysis: {response.completion}")
 
 
 if __name__ == "__main__":
