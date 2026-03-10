@@ -3,19 +3,22 @@
 A lightweight, type-safe Python library for LLM chat completions.
 
 **Features:**
-- 🎯 Simple, intuitive API for OpenAI and Azure OpenAI
-- 📝 Type-safe structured outputs with Pydantic
-- 🛠️ Built-in tool calling support
-- 🌊 Async streaming
-- 🖼️ Image analysis support
-- ⚡ Minimal dependencies, maximum flexibility
+
+- Simple, intuitive API for OpenAI and Azure OpenAI
+- Type-safe structured outputs with Pydantic
+- Built-in tool calling support
+- Async streaming
+- Image analysis support
+- Minimal dependencies, maximum flexibility
 
 ## Installation
+
 ```bash
 pip install py-llmify
 ```
 
 ## Quick Start
+
 ```python
 import asyncio
 from llmify import ChatOpenAI, UserMessage, SystemMessage
@@ -34,6 +37,7 @@ asyncio.run(main())
 ```
 
 All `invoke` calls return a `ChatInvokeCompletion[T]` with:
+
 - `completion` — the text (or parsed Pydantic model) returned by the model
 - `tool_calls` — list of `ToolCall` objects, if any
 - `usage` — token usage (`ChatInvokeUsage`)
@@ -98,7 +102,7 @@ async def main():
 
     person = response.completion  # type: Person
     print(f"{person.name}, {person.age}, {person.occupation}")
-    # Output: John, 32, data scientist
+    # John, 32, data scientist
 
 asyncio.run(main())
 ```
@@ -202,8 +206,8 @@ tools = [
 ]
 
 response = await llm.invoke(messages, tools=tools)
-print(response.tool_calls[0].function.name)       # "get_weather"
-print(json.loads(response.tool_calls[0].function.arguments))  # {"city": "..."}
+print(response.tool_calls[0].function.name)
+print(json.loads(response.tool_calls[0].function.arguments))
 ```
 
 ### Streaming
@@ -221,18 +225,20 @@ asyncio.run(main())
 ## Configuration
 
 ### Environment Variables
+
 ```bash
 # OpenAI
 export OPENAI_API_KEY="sk-..."
 
 # Azure OpenAI
 export AZURE_OPENAI_API_KEY="..."
-export AZURE_OPENAI_ENDPOINT="https://.openai.azure.com/"
+export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com/"
 ```
 
 ### Model Parameters
 
 Set defaults when initializing or override per request:
+
 ```python
 llm = ChatOpenAI(
     model="gpt-4o",
@@ -247,49 +253,37 @@ response = await llm.invoke(
 )
 ```
 
-**Supported Parameters:**
-- `temperature` — Creativity (0–2)
-- `max_tokens` — Maximum response length
-- `top_p` — Nucleus sampling
-- `frequency_penalty` — Reduce repetition
-- `presence_penalty` — Encourage diversity
-- `stop` — Stop sequences
-- `seed` — Deterministic outputs
+Supported parameters: `temperature`, `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`.
 
 ## Providers
 
 ### OpenAI
+
 ```python
 from llmify import ChatOpenAI
 
 llm = ChatOpenAI(
     model="gpt-4o",
-    api_key="sk-..."  # Optional if OPENAI_API_KEY is set
+    api_key="sk-...",  # optional if OPENAI_API_KEY is set
+    base_url="https://...",  # optional, for OpenAI-compatible APIs
 )
 ```
 
 ### Azure OpenAI
+
 ```python
 from llmify import ChatAzureOpenAI
 
 llm = ChatAzureOpenAI(
     model="gpt-4o",
-    api_key="...",              # Optional if AZURE_OPENAI_API_KEY is set
-    azure_endpoint="https://.openai.azure.com/",  # Optional if env var is set
+    api_key="...",           # optional if AZURE_OPENAI_API_KEY is set
+    azure_endpoint="https://<resource>.openai.azure.com/",  # optional if env var is set
 )
 ```
 
 ## Design Philosophy
 
-**Lightweight & Focused**
-- Thin wrapper around official SDKs
-- Minimal dependencies
-- No unnecessary abstractions
-
-**Type-Safe & Modern**
-- Full type hints throughout
-- Pydantic for all messages and responses
-- Async-first design
+Thin wrapper around official SDKs with minimal dependencies and no unnecessary abstractions. Full type hints throughout, Pydantic for all messages and responses, async-first.
 
 ## License
 
