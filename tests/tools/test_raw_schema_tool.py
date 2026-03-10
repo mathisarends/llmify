@@ -4,23 +4,23 @@ from llmify.tools import RawSchemaTool
 
 
 class TestRawSchemaTool:
-    def test_stores_name(self):
+    def test_stores_name(self) -> None:
         tool = RawSchemaTool(
             name="search_web", schema={"type": "object", "properties": {}}
         )
         assert tool.name == "search_web"
 
-    def test_stores_description(self):
+    def test_stores_description(self) -> None:
         tool = RawSchemaTool(name="search", schema={}, description="Search the web")
         schema = tool.to_openai_schema()
         assert schema["function"]["description"] == "Search the web"
 
-    def test_defaults_to_empty_description(self):
+    def test_defaults_to_empty_description(self) -> None:
         tool = RawSchemaTool(name="search", schema={})
         schema = tool.to_openai_schema()
         assert schema["function"]["description"] == ""
 
-    def test_generates_valid_openai_schema(self):
+    def test_generates_valid_openai_schema(self) -> None:
         tool = RawSchemaTool(
             name="calculator",
             schema={
@@ -36,7 +36,7 @@ class TestRawSchemaTool:
         assert schema["function"]["parameters"]["type"] == "object"
         assert "a" in schema["function"]["parameters"]["properties"]
 
-    def test_preserves_schema_structure(self):
+    def test_preserves_schema_structure(self) -> None:
         original_schema = {
             "type": "object",
             "properties": {
@@ -51,19 +51,19 @@ class TestRawSchemaTool:
 
         assert result["function"]["parameters"] == original_schema
 
-    def test_parses_json_arguments(self):
+    def test_parses_json_arguments(self) -> None:
         tool = RawSchemaTool(name="search", schema={})
         args = tool.parse_arguments('{"query": "test", "max": 10}')
 
         assert args == {"query": "test", "max": 10}
 
-    def test_raises_on_invalid_json(self):
+    def test_raises_on_invalid_json(self) -> None:
         tool = RawSchemaTool(name="search", schema={})
 
         with pytest.raises(json.JSONDecodeError):
             tool.parse_arguments("invalid json")
 
-    def test_handles_complex_nested_schema(self):
+    def test_handles_complex_nested_schema(self) -> None:
         tool = RawSchemaTool(
             name="complex_tool",
             schema={
