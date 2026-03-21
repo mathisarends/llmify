@@ -1,14 +1,18 @@
-from typing import Literal, TypeVar, Any, overload
+from typing import Literal, TypeVar, Any, overload, TYPE_CHECKING
 from collections.abc import AsyncIterator
 
-from openai.types import CompletionUsage
 from pydantic import BaseModel
 
-from openai import AsyncOpenAI, AsyncAzureOpenAI
-from openai.types.chat import ChatCompletion, ChatCompletionChunk
-from openai.types.chat.chat_completion_message_tool_call import (
-    ChatCompletionMessageToolCall,
-)
+try:
+    from openai.types import CompletionUsage
+    from openai import AsyncOpenAI, AsyncAzureOpenAI
+    from openai.types.chat import ChatCompletion, ChatCompletionChunk
+    from openai.types.chat.chat_completion_message_tool_call import (
+        ChatCompletionMessageToolCall,
+    )
+except ImportError:
+    if TYPE_CHECKING:
+        raise
 
 from llmify.base import ChatModel
 

@@ -1,8 +1,16 @@
 import os
 import httpx
-from openai import AsyncAzureOpenAI
-from llmify.providers.openai_compatible import OpenAICompatible
 from typing import Any
+
+try:
+    from openai import AsyncAzureOpenAI
+except ImportError:
+    raise ImportError(
+        "The 'openai' package is required for ChatAzureOpenAI. "
+        "Install it with: pip install py-llmify[openai]"
+    )
+
+from llmify.providers.openai_compatible import OpenAICompatible
 
 
 class ChatAzureOpenAI(OpenAICompatible):

@@ -1,12 +1,13 @@
 import asyncio
 from llmify import (
-    ChatOpenAI,
     UserMessage,
     ContentPartImageParam,
     ContentPartTextParam,
     ImageURL,
 )
 from dotenv import load_dotenv
+
+from llmify import ChatOpenAI
 
 load_dotenv(override=True)
 

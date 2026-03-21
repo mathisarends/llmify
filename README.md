@@ -4,7 +4,7 @@ A lightweight, type-safe Python library for LLM chat completions.
 
 **Features:**
 
-- Simple, intuitive API for OpenAI and Azure OpenAI
+- Simple, intuitive API for OpenAI, Azure OpenAI, and Anthropic
 - Type-safe structured outputs with Pydantic
 - Built-in tool calling support
 - Async streaming
@@ -15,6 +15,14 @@ A lightweight, type-safe Python library for LLM chat completions.
 
 ```bash
 pip install py-llmify
+```
+
+Install only the provider you need:
+
+```bash
+pip install py-llmify[openai]      # OpenAI + Azure OpenAI
+pip install py-llmify[anthropic]   # Anthropic (Claude)
+pip install py-llmify[all]         # All providers
 ```
 
 ## Quick Start
@@ -233,6 +241,9 @@ export OPENAI_API_KEY="sk-..."
 # Azure OpenAI
 export AZURE_OPENAI_API_KEY="..."
 export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com/"
+
+# Anthropic
+export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
 ### Model Parameters
@@ -265,7 +276,6 @@ from llmify import ChatOpenAI
 llm = ChatOpenAI(
     model="gpt-4o",
     api_key="sk-...",  # optional if OPENAI_API_KEY is set
-    base_url="https://...",  # optional, for OpenAI-compatible APIs
 )
 ```
 
@@ -280,6 +290,19 @@ llm = ChatAzureOpenAI(
     azure_endpoint="https://<resource>.openai.azure.com/",  # optional if env var is set
 )
 ```
+
+### Anthropic
+
+```python
+from llmify import ChatAnthropic
+
+llm = ChatAnthropic(
+    model="claude-sonnet-4-20250514",
+    api_key="sk-ant-...",  # optional if ANTHROPIC_API_KEY is set
+)
+```
+
+The Anthropic provider supports the same API surface — `invoke`, `stream`, structured output, and tool calling — all mapped to the Anthropic messages API under the hood.
 
 ## Design Philosophy
 
