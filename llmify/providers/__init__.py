@@ -1,9 +1,9 @@
 from .openai import ChatOpenAI
 from .azure import ChatAzureOpenAI
 
-from .base import (
+from .openai_compatible import (
     ChatModel,
-    BaseOpenAICompatible,
+    OpenAICompatible,
     ChatInvokeCompletion,
     ChatInvokeUsage,
 )
@@ -12,7 +12,7 @@ __all__ = [
     "ChatOpenAI",
     "ChatAzureOpenAI",
     "ChatModel",
-    "BaseOpenAICompatible",
+    "OpenAICompatible",
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
 ]

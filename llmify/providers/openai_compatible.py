@@ -29,7 +29,7 @@ from llmify.views import ChatInvokeCompletion, ChatInvokeUsage
 T = TypeVar("T", bound=BaseModel)
 
 
-class BaseOpenAICompatible(ChatModel):
+class OpenAICompatible(ChatModel):
     _client: AsyncOpenAI | AsyncAzureOpenAI
     _model: str
 

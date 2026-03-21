@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 from pydantic import BaseModel
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
-from llmify.providers.base import BaseOpenAICompatible
+from llmify.providers.openai_compatible import OpenAICompatible
 from llmify.providers import ChatInvokeCompletion
 from llmify.messages import (
     UserMessage,
@@ -25,7 +25,7 @@ class SearchResult(BaseModel):
     results: list[str]
 
 
-class MockChatModel(BaseOpenAICompatible):
+class MockChatModel(OpenAICompatible):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._client = AsyncMock()

@@ -14,7 +14,7 @@ from .providers import (
     ChatOpenAI,
     ChatAzureOpenAI,
     ChatModel,
-    BaseOpenAICompatible,
+    OpenAICompatible,
     ChatInvokeCompletion,
     ChatInvokeUsage,
 )
@@ -39,7 +39,7 @@ __all__ = [
     "ChatOpenAI",
     "ChatAzureOpenAI",
     "ChatModel",
-    "BaseOpenAICompatible",
+    "OpenAICompatible",
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
     "Tool",

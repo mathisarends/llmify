@@ -1,11 +1,11 @@
 import os
 import httpx
 from openai import AsyncOpenAI
-from llmify.providers.base import BaseOpenAICompatible
+from llmify.providers.openai_compatible import OpenAICompatible
 from typing import Any
 
 
-class ChatOpenAI(BaseOpenAICompatible):
+class ChatOpenAI(OpenAICompatible):
     def __init__(
         self,
         model: str = "gpt-4o",
