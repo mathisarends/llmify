@@ -10,7 +10,7 @@ from openai.types.chat.chat_completion_message_tool_call import (
     ChatCompletionMessageToolCall,
 )
 
-from llmify.base import BaseChatModel
+from llmify.base import ChatModel
 
 from llmify.messages import (
     Message,
@@ -29,7 +29,7 @@ from llmify.views import ChatInvokeCompletion, ChatInvokeUsage
 T = TypeVar("T", bound=BaseModel)
 
 
-class BaseOpenAICompatible(BaseChatModel):
+class BaseOpenAICompatible(ChatModel):
     _client: AsyncOpenAI | AsyncAzureOpenAI
     _model: str
 

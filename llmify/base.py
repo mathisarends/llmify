@@ -9,7 +9,7 @@ from llmify.messages import Message
 from llmify.views import ChatInvokeCompletion
 
 
-class BaseChatModel(ABC):
+class ChatModel(ABC):
     def __init__(
         self,
         max_tokens: int | None = None,

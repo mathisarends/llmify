@@ -13,7 +13,7 @@ from .messages import (
 from .providers import (
     ChatOpenAI,
     ChatAzureOpenAI,
-    BaseChatModel,
+    ChatModel,
     BaseOpenAICompatible,
     ChatInvokeCompletion,
     ChatInvokeUsage,
@@ -38,7 +38,7 @@ __all__ = [
     "ImageURL",
     "ChatOpenAI",
     "ChatAzureOpenAI",
-    "BaseChatModel",
+    "ChatModel",
     "BaseOpenAICompatible",
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
