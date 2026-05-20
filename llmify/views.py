@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -25,22 +26,28 @@ class ChatInvokeCompletion[T](BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
 
 
+class StreamEventType(StrEnum):
+    TEXT = "text"
+    TOOL_CALL = "tool_call"
+    END = "end"
+
+
 class StreamTextDelta(BaseModel):
-    type: Literal["text"] = "text"
+    type: Literal[StreamEventType.TEXT] = StreamEventType.TEXT
     delta: str
 
 
 class StreamToolCall(BaseModel):
     """Emitted once a tool call's arguments JSON is fully assembled."""
 
-    type: Literal["tool_call"] = "tool_call"
+    type: Literal[StreamEventType.TOOL_CALL] = StreamEventType.TOOL_CALL
     tool_call: ToolCall
 
 
 class StreamEnd(BaseModel):
     """Final event. Always emitted exactly once at the end of the stream."""
 
-    type: Literal["end"] = "end"
+    type: Literal[StreamEventType.END] = StreamEventType.END
     stop_reason: str | None = None
     usage: ChatInvokeUsage | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)

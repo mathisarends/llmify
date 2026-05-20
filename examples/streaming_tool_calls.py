@@ -3,7 +3,7 @@ import json
 
 from dotenv import load_dotenv
 
-from llmify import ChatOpenAI, SystemMessage, UserMessage, tool
+from llmify import ChatOpenAI, StreamEventType, SystemMessage, UserMessage, tool
 
 
 @tool
@@ -15,7 +15,7 @@ def get_weather(city: str, unit: str = "celsius") -> str:
 async def main() -> None:
     load_dotenv(override=True)
 
-    llm = ChatOpenAI(model="gpt-4o")
+    llm = ChatOpenAI()
     messages = [
         SystemMessage(content="You are a helpful assistant."),
         UserMessage(
@@ -23,19 +23,25 @@ async def main() -> None:
         ),
     ]
 
+    print("Streaming text chunks (numbered):")
+    chunk_count = 0
+
     async for event in llm.stream(messages, tools=[get_weather]):
         match event.type:
-            case "text":
-                print(event.delta, end="", flush=True)
-            case "tool_call":
+            case StreamEventType.TEXT:
+                chunk_count += 1
+                print(f"[{chunk_count:02d}]{event.delta}", end="", flush=True)
+            case StreamEventType.TOOL_CALL:
                 tool_call = event.tool_call
                 if tool_call.function.name == "get_weather":
                     args = json.loads(tool_call.function.arguments)
                     result = get_weather(**args)
-                    print(f"\n[tool:{tool_call.function.name}] {result}")
-            case "end":
+                    print(f"\n[tool:{tool_call.function.name} args={args}] {result}")
+            case StreamEventType.END:
                 usage = event.usage.total_tokens if event.usage else "unknown"
-                print(f"\n[stop={event.stop_reason}, tokens={usage}]")
+                print(
+                    f"\n[stream_end chunks={chunk_count} stop={event.stop_reason} tokens={usage}]"
+                )
 
 
 if __name__ == "__main__":

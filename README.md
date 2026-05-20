@@ -221,14 +221,46 @@ print(json.loads(response.tool_calls[0].function.arguments))
 ### Streaming
 
 ```python
-async def main():
-    llm = ChatOpenAI(model="gpt-4o")
+import json
+from llmify import ChatOpenAI, UserMessage, StreamEventType
 
-    async for chunk in llm.stream([UserMessage(content="Write a haiku about Python")]):
-        print(chunk, end="", flush=True)
+async def main():
+    llm = ChatOpenAI()
+    chunk_count = 0
+
+    async for event in llm.stream([UserMessage(content="Write a haiku about Python")]):
+        if event.type is StreamEventType.TEXT:
+            chunk_count += 1
+            print(f"[{chunk_count:02d}]{event.delta}", end="", flush=True)
+        elif event.type is StreamEventType.END:
+            print(f"\n[stream_end stop={event.stop_reason}]")
 
 asyncio.run(main())
 ```
+
+For streaming with tools, handle `StreamEventType.TOOL_CALL` and parse the complete JSON arguments:
+
+```python
+import json
+from llmify import ChatOpenAI, UserMessage, StreamEventType
+
+async def main():
+    llm = ChatOpenAI()
+
+    async for event in llm.stream(messages, tools=[get_weather]):
+        if event.type is StreamEventType.TEXT:
+            print(event.delta, end="", flush=True)
+        elif event.type is StreamEventType.TOOL_CALL:
+            args = json.loads(event.tool_call.function.arguments)
+            result = get_weather(**args)
+            print(f"\n[tool_result] {result}")
+        elif event.type is StreamEventType.END:
+            print(f"\n[stream_end stop={event.stop_reason} tokens={event.usage.total_tokens if event.usage else 'unknown'}]")
+
+asyncio.run(main())
+```
+
+Full runnable example: `examples/streaming_tool_calls.py`
 
 ## Configuration
 

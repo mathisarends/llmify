@@ -16,7 +16,7 @@ from llmify.providers.openai_compatible import OpenAICompatible
 class ChatOpenAI(OpenAICompatible):
     def __init__(
         self,
-        model: str = "gpt-4o",
+        model: str = "gpt-5.4-mini",
         api_key: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,

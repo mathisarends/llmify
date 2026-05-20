@@ -1,4 +1,4 @@
-from typing import Literal, TypeVar, Any, overload, TYPE_CHECKING
+from typing import Literal, Any, overload, TYPE_CHECKING
 from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
@@ -37,15 +37,13 @@ from llmify.views import (
     StreamToolCall,
 )
 
-T = TypeVar("T", bound=BaseModel)
-
 
 class OpenAICompatible(ChatModel):
     _client: AsyncOpenAI | AsyncAzureOpenAI
     _model: str
 
     @overload
-    async def invoke[T](
+    async def invoke[T: BaseModel](
         self, messages: list[Message], output_format: type[T], **kwargs: Any
     ) -> ChatInvokeCompletion[T]: ...
 
@@ -54,7 +52,7 @@ class OpenAICompatible(ChatModel):
         self, messages: list[Message], output_format: None = None, **kwargs: Any
     ) -> ChatInvokeCompletion[str]: ...
 
-    async def invoke[T](
+    async def invoke[T: BaseModel](
         self,
         messages: list[Message],
         output_format: type[T] | None = None,
@@ -77,7 +75,7 @@ class OpenAICompatible(ChatModel):
 
         return await self._invoke_plain(converted_messages, params)
 
-    async def _invoke_with_structured_output[T](
+    async def _invoke_with_structured_output[T: BaseModel](
         self, messages: list[dict], output_format: type[T], params: dict[str, Any]
     ) -> ChatInvokeCompletion[T]:
         response = await self._client.beta.chat.completions.parse(

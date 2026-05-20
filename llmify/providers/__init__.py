@@ -2,6 +2,7 @@ from llmify.base import ChatModel
 from llmify.views import (
     ChatInvokeCompletion,
     ChatInvokeUsage,
+    StreamEventType,
     StreamTextDelta,
     StreamToolCall,
     StreamEnd,
@@ -41,6 +42,7 @@ __all__ = [
     "OpenAICompatible",
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
+    "StreamEventType",
     "StreamTextDelta",
     "StreamToolCall",
     "StreamEnd",

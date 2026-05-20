@@ -4,6 +4,8 @@ import httpx
 from typing import Literal, Any, overload
 from collections.abc import AsyncIterator
 
+from pydantic import BaseModel
+
 try:
     from anthropic import AsyncAnthropic
     from anthropic.types import Message as AnthropicMessage, Usage as AnthropicUsage
@@ -83,7 +85,7 @@ class ChatAnthropic(ChatModel):
         self._model = model
 
     @overload
-    async def invoke[T](
+    async def invoke[T: BaseModel](
         self, messages: list[Message], output_format: type[T], **kwargs: Any
     ) -> ChatInvokeCompletion[T]: ...
 
@@ -92,7 +94,7 @@ class ChatAnthropic(ChatModel):
         self, messages: list[Message], output_format: None = None, **kwargs: Any
     ) -> ChatInvokeCompletion[str]: ...
 
-    async def invoke[T](
+    async def invoke[T: BaseModel](
         self,
         messages: list[Message],
         output_format: type[T] | None = None,
@@ -178,7 +180,7 @@ class ChatAnthropic(ChatModel):
             usage=self._parse_usage(response.usage),
         )
 
-    async def _invoke_with_structured_output[T](
+    async def _invoke_with_structured_output[T: BaseModel](
         self, params: dict[str, Any], output_format: type[T]
     ) -> ChatInvokeCompletion[T]:
         schema = output_format.model_json_schema()

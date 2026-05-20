@@ -4,6 +4,7 @@ from typing import Any, Literal, overload
 from collections.abc import AsyncIterator
 
 import httpx
+from pydantic import BaseModel
 
 from llmify.messages import Message
 from llmify.tools import Tool
@@ -63,7 +64,7 @@ class ChatModel(ABC):
         return params
 
     @overload
-    async def invoke[T](
+    async def invoke[T: BaseModel](
         self, messages: list[Message], output_format: type[T], **kwargs: Any
     ) -> ChatInvokeCompletion[T]: ...
 
@@ -73,7 +74,7 @@ class ChatModel(ABC):
     ) -> ChatInvokeCompletion[str]: ...
 
     @abstractmethod
-    async def invoke[T](
+    async def invoke[T: BaseModel](
         self,
         messages: list[Message],
         output_format: type[T] | None = None,
