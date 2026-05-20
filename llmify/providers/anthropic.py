@@ -27,7 +27,14 @@ from llmify.messages import (
     ToolCall,
 )
 from llmify.tools import Tool
-from llmify.views import ChatInvokeCompletion, ChatInvokeUsage
+from llmify.views import (
+    ChatInvokeCompletion,
+    ChatInvokeUsage,
+    StreamEnd,
+    StreamEvent,
+    StreamTextDelta,
+    StreamToolCall,
+)
 
 
 class ChatAnthropic(ChatModel):
@@ -318,9 +325,115 @@ class ChatAnthropic(ChatModel):
         return system_text, converted
 
     async def stream(
-        self, messages: list[Message], **kwargs: Any
-    ) -> AsyncIterator[str]:
+        self,
+        messages: list[Message],
+        tools: list[Tool | dict] | None = None,
+        tool_choice: Literal["auto", "required", "none"] = "auto",
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamEvent]:
         params = self._build_params(messages, kwargs)
+
+        anthropic_tools = [
+            t if isinstance(t, dict) else self._convert_tool(t) for t in tools or []
+        ]
+        if anthropic_tools:
+            params["tools"] = anthropic_tools
+            params["tool_choice"] = {
+                "auto": {"type": "auto"},
+                "required": {"type": "any"},
+                "none": {"type": "none"},
+            }[tool_choice]
+
+        blocks: dict[int, dict[str, str]] = {}
+        text_acc: list[str] = []
+        stop_reason: str | None = None
+        input_tokens = 0
+        output_tokens = 0
+        cache_read_tokens: int | None = None
+        cache_creation_tokens: int | None = None
+        saw_usage = False
+
         async with self._client.messages.stream(**params) as stream:
-            async for text in stream.text_stream:
-                yield text
+            async for event in stream:
+                if event.type == "message_start":
+                    usage = getattr(event.message, "usage", None)
+                    if usage is not None:
+                        saw_usage = True
+                        input_tokens = getattr(usage, "input_tokens", input_tokens)
+                        cache_read_tokens = getattr(
+                            usage, "cache_read_input_tokens", cache_read_tokens
+                        )
+                        cache_creation_tokens = getattr(
+                            usage,
+                            "cache_creation_input_tokens",
+                            cache_creation_tokens,
+                        )
+
+                elif event.type == "content_block_start":
+                    content_block = event.content_block
+                    if content_block.type == "tool_use":
+                        blocks[event.index] = {
+                            "type": "tool_use",
+                            "id": content_block.id,
+                            "name": content_block.name,
+                            "json": "",
+                        }
+                    elif content_block.type == "text":
+                        blocks[event.index] = {"type": "text"}
+
+                elif event.type == "content_block_delta":
+                    delta = event.delta
+                    if delta.type == "text_delta":
+                        text_acc.append(delta.text)
+                        yield StreamTextDelta(delta=delta.text)
+                    elif delta.type == "input_json_delta":
+                        block = blocks.get(event.index)
+                        if block and block.get("type") == "tool_use":
+                            block["json"] = block.get("json", "") + delta.partial_json
+
+                elif event.type == "content_block_stop":
+                    block = blocks.get(event.index)
+                    if block and block.get("type") == "tool_use":
+                        yield StreamToolCall(
+                            tool_call=ToolCall(
+                                id=block["id"],
+                                function=Function(
+                                    name=block["name"],
+                                    arguments=block.get("json") or "{}",
+                                ),
+                            )
+                        )
+
+                elif event.type == "message_delta":
+                    stop_reason = event.delta.stop_reason or stop_reason
+                    usage = getattr(event, "usage", None)
+                    if usage is not None:
+                        saw_usage = True
+                        output_tokens = getattr(usage, "output_tokens", output_tokens)
+
+        usage_view: ChatInvokeUsage | None = None
+        if saw_usage:
+            usage_view = ChatInvokeUsage(
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+                total_tokens=input_tokens + output_tokens,
+                prompt_cached_tokens=cache_read_tokens,
+                prompt_cache_creation_tokens=cache_creation_tokens,
+            )
+
+        yield StreamEnd(
+            stop_reason=stop_reason,
+            usage=usage_view,
+            tool_calls=[
+                ToolCall(
+                    id=block["id"],
+                    function=Function(
+                        name=block["name"],
+                        arguments=block.get("json") or "{}",
+                    ),
+                )
+                for _, block in sorted(blocks.items())
+                if block.get("type") == "tool_use"
+            ],
+            completion="".join(text_acc),
+        )

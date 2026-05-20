@@ -15,6 +15,10 @@ from .providers import (
     ChatModel,
     ChatInvokeCompletion,
     ChatInvokeUsage,
+    StreamTextDelta,
+    StreamToolCall,
+    StreamEnd,
+    StreamEvent,
 )
 from .tools import (
     Tool,
@@ -72,6 +76,10 @@ __all__ = [
     "OpenAICompatible",
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
+    "StreamTextDelta",
+    "StreamToolCall",
+    "StreamEnd",
+    "StreamEvent",
     "Tool",
     "FunctionTool",
     "RawSchemaTool",

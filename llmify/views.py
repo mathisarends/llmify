@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from llmify.messages import ToolCall
 
@@ -20,4 +22,29 @@ class ChatInvokeCompletion[T](BaseModel):
     redacted_thinking: str | None = None
     usage: ChatInvokeUsage | None = None
     stop_reason: str | None = None
-    tool_calls: list[ToolCall] = []
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+
+
+class StreamTextDelta(BaseModel):
+    type: Literal["text"] = "text"
+    delta: str
+
+
+class StreamToolCall(BaseModel):
+    """Emitted once a tool call's arguments JSON is fully assembled."""
+
+    type: Literal["tool_call"] = "tool_call"
+    tool_call: ToolCall
+
+
+class StreamEnd(BaseModel):
+    """Final event. Always emitted exactly once at the end of the stream."""
+
+    type: Literal["end"] = "end"
+    stop_reason: str | None = None
+    usage: ChatInvokeUsage | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    completion: str = ""
+
+
+type StreamEvent = StreamTextDelta | StreamToolCall | StreamEnd

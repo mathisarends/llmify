@@ -28,7 +28,14 @@ from llmify.messages import (
     ToolCall,
 )
 from llmify.tools import Tool
-from llmify.views import ChatInvokeCompletion, ChatInvokeUsage
+from llmify.views import (
+    ChatInvokeCompletion,
+    ChatInvokeUsage,
+    StreamEnd,
+    StreamEvent,
+    StreamTextDelta,
+    StreamToolCall,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -210,16 +217,100 @@ class OpenAICompatible(ChatModel):
         return {"role": msg.role, "content": msg.text}
 
     async def stream(
-        self, messages: list[Message], **kwargs: Any
-    ) -> AsyncIterator[str]:
+        self,
+        messages: list[Message],
+        tools: list[Tool | dict] | None = None,
+        tool_choice: Literal["auto", "required", "none"] = "auto",
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamEvent]:
         params = self._merge_params(kwargs)
-        stream = await self._client.chat.completions.create(
-            model=self._model,
-            messages=self._convert_messages(messages),
-            stream=True,
-            **params,
+        openai_tools = [
+            t if isinstance(t, dict) else t.to_openai_schema() for t in tools or []
+        ]
+
+        raw_stream_options = params.pop("stream_options", None)
+        stream_options: dict[str, Any] = (
+            raw_stream_options.copy() if isinstance(raw_stream_options, dict) else {}
         )
+        stream_options["include_usage"] = True
+
+        request_args: dict[str, Any] = {
+            "model": self._model,
+            "messages": self._convert_messages(messages),
+            "stream": True,
+            "stream_options": stream_options,
+            **params,
+        }
+        if openai_tools:
+            request_args["tools"] = openai_tools
+            request_args["tool_choice"] = tool_choice
+
+        stream = await self._client.chat.completions.create(**request_args)
+
+        buffers: dict[int, dict[str, Any]] = {}
+        text_acc: list[str] = []
+        stop_reason: str | None = None
+        usage: ChatInvokeUsage | None = None
+
         chunk: ChatCompletionChunk
         async for chunk in stream:
-            if content := chunk.choices[0].delta.content:
-                yield content
+            if chunk.usage is not None:
+                usage = self._parse_usage(chunk.usage)
+
+            if not chunk.choices:
+                continue
+
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            if delta.content:
+                text_acc.append(delta.content)
+                yield StreamTextDelta(delta=delta.content)
+
+            for tc_delta in delta.tool_calls or []:
+                buf = buffers.setdefault(
+                    tc_delta.index,
+                    {"id": "", "name": "", "arguments": "", "emitted": False},
+                )
+                if tc_delta.id:
+                    buf["id"] = tc_delta.id
+
+                if tc_delta.function:
+                    if tc_delta.function.name:
+                        buf["name"] = tc_delta.function.name
+                    if tc_delta.function.arguments:
+                        buf["arguments"] += tc_delta.function.arguments
+
+            if choice.finish_reason:
+                stop_reason = choice.finish_reason
+                for idx in sorted(buffers):
+                    buf = buffers[idx]
+                    if buf["emitted"]:
+                        continue
+
+                    buf["emitted"] = True
+                    yield StreamToolCall(
+                        tool_call=ToolCall(
+                            id=buf["id"],
+                            function=Function(
+                                name=buf["name"],
+                                arguments=buf["arguments"],
+                            ),
+                        )
+                    )
+
+        yield StreamEnd(
+            stop_reason=stop_reason,
+            usage=usage,
+            tool_calls=[
+                ToolCall(
+                    id=buffers[i]["id"],
+                    function=Function(
+                        name=buffers[i]["name"],
+                        arguments=buffers[i]["arguments"],
+                    ),
+                )
+                for i in sorted(buffers)
+            ],
+            completion="".join(text_acc),
+        )

@@ -1,23 +1,26 @@
 import json
-import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-from pydantic import BaseModel
-from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
-from llmify.providers.openai_compatible import OpenAICompatible
-from llmify.providers import ChatInvokeCompletion
+import pytest
+from openai.types.chat import ChatCompletion
+from pydantic import BaseModel
+
 from llmify.messages import (
-    UserMessage,
-    SystemMessage,
     AssistantMessage,
-    ToolResultMessage,
-    ToolCall,
-    Function,
-    ContentPartTextParam,
     ContentPartImageParam,
+    ContentPartTextParam,
+    Function,
     ImageURL,
+    SystemMessage,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
 )
+from llmify.providers import ChatInvokeCompletion
+from llmify.providers.openai_compatible import OpenAICompatible
 from llmify.tools import FunctionTool
+from llmify.views import StreamEnd, StreamTextDelta, StreamToolCall
 
 
 class SearchResult(BaseModel):
@@ -326,34 +329,226 @@ class TestStructuredOutput:
 
 
 class TestStreaming:
+    @staticmethod
+    def _make_chunk(
+        *,
+        content: str | None = None,
+        tool_calls: list | None = None,
+        finish_reason: str | None = None,
+        usage: Mock | None = None,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(content=content, tool_calls=tool_calls),
+                    finish_reason=finish_reason,
+                )
+            ],
+            usage=usage,
+        )
+
     @pytest.mark.asyncio
-    async def test_yields_content_chunks(self, mock_model: MockChatModel) -> None:
-        mock_chunk1 = Mock(spec=ChatCompletionChunk)
-        mock_chunk1.choices = [Mock(delta=Mock(content="Hello"))]
-        mock_chunk2 = Mock(spec=ChatCompletionChunk)
-        mock_chunk2.choices = [Mock(delta=Mock(content=" world"))]
-        mock_chunk3 = Mock(spec=ChatCompletionChunk)
-        mock_chunk3.choices = [Mock(delta=Mock(content=None))]
+    async def test_streams_text_and_end_event(self, mock_model: MockChatModel) -> None:
+        usage = Mock(
+            prompt_tokens=10,
+            completion_tokens=4,
+            total_tokens=14,
+            prompt_tokens_details=Mock(cached_tokens=3),
+        )
 
         async def mock_stream():
-            for chunk in [mock_chunk1, mock_chunk2, mock_chunk3]:
-                yield chunk
+            yield self._make_chunk(content="Hello")
+            yield self._make_chunk(content=" world")
+            yield self._make_chunk(finish_reason="stop", usage=usage)
 
         mock_model._client.chat.completions.create = AsyncMock(
             return_value=mock_stream()
         )
 
-        chunks = []
-        async for chunk in mock_model.stream([UserMessage(content="Hi")]):
-            chunks.append(chunk)
+        events = []
+        async for event in mock_model.stream([UserMessage(content="Hi")]):
+            events.append(event)
 
-        assert chunks == ["Hello", " world"]
+        assert isinstance(events[0], StreamTextDelta)
+        assert isinstance(events[1], StreamTextDelta)
+        assert isinstance(events[2], StreamEnd)
+        assert events[0].delta == "Hello"
+        assert events[1].delta == " world"
+        assert events[2].completion == "Hello world"
+        assert events[2].usage is not None
+        assert events[2].usage.total_tokens == 14
+
+    @pytest.mark.asyncio
+    async def test_buffers_tool_calls_until_finish(
+        self, mock_model: MockChatModel
+    ) -> None:
+        async def mock_stream():
+            yield self._make_chunk(
+                tool_calls=[
+                    SimpleNamespace(
+                        index=0,
+                        id="call_1",
+                        function=SimpleNamespace(
+                            name="search_web", arguments='{"query":"te'
+                        ),
+                    )
+                ]
+            )
+            yield self._make_chunk(
+                tool_calls=[
+                    SimpleNamespace(
+                        index=0,
+                        id=None,
+                        function=SimpleNamespace(name=None, arguments='st"}'),
+                    )
+                ]
+            )
+            yield self._make_chunk(finish_reason="tool_calls")
+
+        mock_model._client.chat.completions.create = AsyncMock(
+            return_value=mock_stream()
+        )
+
+        events = []
+        async for event in mock_model.stream([UserMessage(content="Hi")]):
+            events.append(event)
+
+        assert len(events) == 2
+        assert isinstance(events[0], StreamToolCall)
+        assert isinstance(events[1], StreamEnd)
+        assert json.loads(events[0].tool_call.function.arguments) == {"query": "test"}
+        assert len(events[1].tool_calls) == 1
+        assert events[1].tool_calls[0].function.name == "search_web"
+
+    @pytest.mark.asyncio
+    async def test_handles_multiple_tool_calls_in_stable_order(
+        self, mock_model: MockChatModel
+    ) -> None:
+        async def mock_stream():
+            yield self._make_chunk(content="Working...")
+            yield self._make_chunk(
+                tool_calls=[
+                    SimpleNamespace(
+                        index=1,
+                        id="call_b",
+                        function=SimpleNamespace(name="tool_b", arguments='{"b":'),
+                    ),
+                    SimpleNamespace(
+                        index=0,
+                        id="call_a",
+                        function=SimpleNamespace(name="tool_a", arguments='{"a":1}'),
+                    ),
+                ]
+            )
+            yield self._make_chunk(
+                tool_calls=[
+                    SimpleNamespace(
+                        index=1,
+                        id=None,
+                        function=SimpleNamespace(name=None, arguments="2}"),
+                    )
+                ]
+            )
+            yield self._make_chunk(finish_reason="tool_calls")
+
+        mock_model._client.chat.completions.create = AsyncMock(
+            return_value=mock_stream()
+        )
+
+        events = []
+        async for event in mock_model.stream([UserMessage(content="Hi")]):
+            events.append(event)
+
+        assert [event.type for event in events] == [
+            "text",
+            "tool_call",
+            "tool_call",
+            "end",
+        ]
+        assert events[1].tool_call.id == "call_a"
+        assert events[2].tool_call.id == "call_b"
+        assert json.loads(events[1].tool_call.function.arguments) == {"a": 1}
+        assert json.loads(events[2].tool_call.function.arguments) == {"b": 2}
+
+        end_event = events[3]
+        assert isinstance(end_event, StreamEnd)
+        assert [tc.id for tc in end_event.tool_calls] == ["call_a", "call_b"]
+        assert end_event.completion == "Working..."
+
+    @pytest.mark.asyncio
+    async def test_ignores_tool_choice_when_tools_are_missing(
+        self, mock_model: MockChatModel
+    ) -> None:
+        async def mock_stream():
+            yield self._make_chunk(finish_reason="stop")
+
+        mock_model._client.chat.completions.create = AsyncMock(
+            return_value=mock_stream()
+        )
+
+        async for _ in mock_model.stream(
+            [UserMessage(content="Hi")], tool_choice="required"
+        ):
+            pass
+
+        call_kwargs = mock_model._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["stream"] is True
+        assert call_kwargs["stream_options"]["include_usage"] is True
+        assert "tools" not in call_kwargs
+        assert "tool_choice" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_passes_tools_and_tool_choice_when_tools_present(
+        self, mock_model: MockChatModel, search_tool: FunctionTool
+    ) -> None:
+        async def mock_stream():
+            yield self._make_chunk(finish_reason="stop")
+
+        mock_model._client.chat.completions.create = AsyncMock(
+            return_value=mock_stream()
+        )
+
+        async for _ in mock_model.stream(
+            [UserMessage(content="Hi")],
+            tools=[search_tool],
+            tool_choice="required",
+        ):
+            pass
+
+        call_kwargs = mock_model._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["tool_choice"] == "required"
+        assert len(call_kwargs["tools"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_tolerates_usage_only_chunk(self, mock_model: MockChatModel) -> None:
+        usage = Mock(
+            prompt_tokens=5,
+            completion_tokens=2,
+            total_tokens=7,
+            prompt_tokens_details=Mock(cached_tokens=0),
+        )
+
+        async def mock_stream():
+            yield SimpleNamespace(choices=[], usage=usage)
+            yield self._make_chunk(content="done", finish_reason="stop")
+
+        mock_model._client.chat.completions.create = AsyncMock(
+            return_value=mock_stream()
+        )
+
+        events = []
+        async for event in mock_model.stream([UserMessage(content="Hi")]):
+            events.append(event)
+
+        end_event = events[-1]
+        assert isinstance(end_event, StreamEnd)
+        assert end_event.usage is not None
+        assert end_event.usage.total_tokens == 7
 
     @pytest.mark.asyncio
     async def test_passes_stream_parameter(self, mock_model: MockChatModel) -> None:
         async def mock_stream():
-            if False:
-                yield
+            yield self._make_chunk(finish_reason="stop")
 
         mock_model._client.chat.completions.create = AsyncMock(
             return_value=mock_stream()

@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
-from typing import Any, overload
+from typing import Any, Literal, overload
 
 from collections.abc import AsyncIterator
 
 import httpx
 
 from llmify.messages import Message
-from llmify.views import ChatInvokeCompletion
+from llmify.tools import Tool
+from llmify.views import ChatInvokeCompletion, StreamEvent
 
 
 class ChatModel(ABC):
@@ -83,5 +84,7 @@ class ChatModel(ABC):
     async def stream(
         self,
         messages: list[Message],
+        tools: list[Tool | dict] | None = None,
+        tool_choice: Literal["auto", "required", "none"] = "auto",
         **kwargs: Any,
-    ) -> AsyncIterator[str]: ...
+    ) -> AsyncIterator[StreamEvent]: ...

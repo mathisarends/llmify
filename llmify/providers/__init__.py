@@ -1,5 +1,12 @@
 from llmify.base import ChatModel
-from llmify.views import ChatInvokeCompletion, ChatInvokeUsage
+from llmify.views import (
+    ChatInvokeCompletion,
+    ChatInvokeUsage,
+    StreamTextDelta,
+    StreamToolCall,
+    StreamEnd,
+    StreamEvent,
+)
 
 
 def __getattr__(name: str):
@@ -34,4 +41,8 @@ __all__ = [
     "OpenAICompatible",
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
+    "StreamTextDelta",
+    "StreamToolCall",
+    "StreamEnd",
+    "StreamEvent",
 ]
