@@ -30,9 +30,9 @@ class SearchResult(BaseModel):
 
 class MockChatModel(OpenAICompatible):
     def __init__(self, **kwargs):
+        kwargs.setdefault("model", "gpt-4")
         super().__init__(**kwargs)
         self._client = AsyncMock()
-        self._model = "gpt-4"
 
 
 @pytest.fixture

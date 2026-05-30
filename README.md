@@ -9,6 +9,7 @@ A lightweight, type-safe Python library for LLM chat completions.
 - Built-in tool calling support
 - Async streaming
 - Image analysis support
+- Built-in token usage tracking
 - Minimal dependencies, maximum flexibility
 
 ## Installation
@@ -261,6 +262,50 @@ asyncio.run(main())
 ```
 
 Full runnable example: `examples/streaming_tool_calls.py`
+
+### Token Usage Tracking
+
+Every provider exposes the model it talks to via the required `.model` property:
+
+```python
+llm = ChatOpenAI(model="gpt-4o")
+print(llm.model)  # "gpt-4o"
+```
+
+Token tracking itself is **opt-in** — nothing is recorded unless you ask for it.
+Create a `TokenTracker` and feed it the usage you care about. Its `add` method
+accepts a `ChatInvokeUsage`, a full `ChatInvokeCompletion`, or a `StreamEnd` event,
+together with the model name (conveniently available as `llm.model`). The same
+tracker can aggregate usage across many calls and even multiple models:
+
+```python
+from llmify import ChatOpenAI, ChatAnthropic, TokenTracker, UserMessage
+
+tracker = TokenTracker()
+gpt = ChatOpenAI(model="gpt-4o")
+claude = ChatAnthropic(model="claude-sonnet-4-20250514")
+
+# Pass the completion object directly...
+r1 = await gpt.invoke([UserMessage(content="Hi")])
+tracker.add(r1, model=gpt.model)
+
+# ...or a StreamEnd event (or a raw ChatInvokeUsage).
+async for event in claude.stream([UserMessage(content="Hi")]):
+    if event.type == "end":
+        tracker.add(event, model=claude.model)
+
+summary = tracker.summary()     # UsageSummary across both providers
+print(summary.entry_count)              # 2
+print(summary.total_tokens)             # e.g. 84
+print(summary.total_prompt_tokens)
+print(summary.total_completion_tokens)
+print(summary.total_prompt_cached_tokens)
+
+print(tracker.entries)          # per-call TokenUsageEntry list (each tagged with `model`)
+tracker.reset()                 # start a fresh accounting window
+```
+
+Full runnable example: `examples/token_tracking.py`
 
 ## Configuration
 

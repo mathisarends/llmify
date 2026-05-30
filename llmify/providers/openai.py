@@ -32,6 +32,7 @@ class ChatOpenAI(OpenAICompatible):
         **kwargs: Any,
     ):
         super().__init__(
+            model=model,
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
@@ -53,4 +54,3 @@ class ChatOpenAI(OpenAICompatible):
             max_retries=max_retries,
             default_headers=default_headers,
         )
-        self._model = model

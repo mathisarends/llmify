@@ -33,6 +33,7 @@ class ChatAzureOpenAI(OpenAICompatible):
         **kwargs: Any,
     ):
         super().__init__(
+            model=model,
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
@@ -57,4 +58,3 @@ class ChatAzureOpenAI(OpenAICompatible):
             timeout=timeout,
             max_retries=max_retries,
         )
-        self._model = model
