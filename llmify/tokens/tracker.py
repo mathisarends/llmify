@@ -47,7 +47,7 @@ class TokenTracker:
 
     @property
     def entries(self) -> list[TokenUsageEntry]:
-        return list(self._entries)
+        return [entry.model_copy() for entry in self._entries]
 
     @property
     def entry_count(self) -> int:
