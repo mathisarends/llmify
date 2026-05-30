@@ -14,6 +14,7 @@ from llmify.views import ChatInvokeCompletion, StreamEvent
 class ChatModel(ABC):
     def __init__(
         self,
+        model: str,
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -26,6 +27,7 @@ class ChatModel(ABC):
         max_retries: int = 2,
         **kwargs: Any,
     ):
+        self._model = model
         self._default_max_tokens = max_tokens
         self._default_temperature = temperature
         self._default_top_p = top_p
@@ -37,6 +39,10 @@ class ChatModel(ABC):
         self._default_timeout = timeout
         self._default_max_retries = max_retries
         self._default_kwargs = kwargs
+
+    @property
+    def model(self) -> str:
+        return self._model
 
     def _merge_params(self, method_kwargs: dict[str, Any]) -> dict[str, Any]:
         defaults = {

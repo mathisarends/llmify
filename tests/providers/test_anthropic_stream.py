@@ -32,9 +32,8 @@ class FakeEventStream:
 
 class MockAnthropicModel(ChatAnthropic):
     def __init__(self):
-        ChatModel.__init__(self)
+        ChatModel.__init__(self, model="claude-test")
         self._client = SimpleNamespace(messages=SimpleNamespace())
-        self._model = "claude-test"
 
 
 class TestAnthropicStreaming:

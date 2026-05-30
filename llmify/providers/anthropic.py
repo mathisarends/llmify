@@ -61,6 +61,7 @@ class ChatAnthropic(ChatModel):
         **kwargs: Any,
     ):
         super().__init__(
+            model=model,
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
@@ -82,7 +83,6 @@ class ChatAnthropic(ChatModel):
             max_retries=max_retries,
             default_headers=default_headers or {},
         )
-        self._model = model
 
     @overload
     async def invoke[T: BaseModel](
