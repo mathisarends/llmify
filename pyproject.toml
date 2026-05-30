@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "py-llmify"
-version = "0.4.0"
+version = "0.5.0"
 description = "A minimal, fast, and type-safe Python library for LLM chat completions with OpenAI and Azure OpenAI support"
 readme = "README.md"
 requires-python = ">=3.12"
