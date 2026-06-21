@@ -1,4 +1,10 @@
 from typing import TYPE_CHECKING
+from .exceptions import (
+    LLMifyError,
+    RetryableError,
+    RateLimitError,
+    OutOfCreditsError,
+)
 from .messages import (
     Message,
     SystemMessage,
@@ -94,4 +100,8 @@ __all__ = [
     "TokenTracker",
     "TokenUsageEntry",
     "UsageSummary",
+    "LLMifyError",
+    "RetryableError",
+    "RateLimitError",
+    "OutOfCreditsError",
 ]

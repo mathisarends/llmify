@@ -5,7 +5,14 @@ from pydantic import BaseModel
 
 try:
     from openai.types import CompletionUsage
-    from openai import AsyncOpenAI, AsyncAzureOpenAI
+    from openai import (
+        AsyncOpenAI,
+        AsyncAzureOpenAI,
+        RateLimitError as _OpenAIRateLimitError,
+        APIConnectionError as _OpenAIConnectionError,
+        APITimeoutError as _OpenAITimeoutError,
+        APIStatusError as _OpenAIStatusError,
+    )
     from openai.types.chat import ChatCompletion, ChatCompletionChunk
     from openai.types.chat.chat_completion_message_tool_call import (
         ChatCompletionMessageToolCall,
@@ -15,6 +22,7 @@ except ImportError:
         raise
 
 from llmify.base import ChatModel
+from llmify.exceptions import OutOfCreditsError, RateLimitError, RetryableError
 
 from llmify.messages import (
     Message,
@@ -36,6 +44,31 @@ from llmify.views import (
     StreamTextDelta,
     StreamToolCall,
 )
+
+
+def _map_openai_error(exc: Exception) -> Exception:
+    if isinstance(exc, _OpenAIRateLimitError):
+        body = getattr(exc, "body", None) or {}
+        code = (
+            (body.get("error") or {}).get("code", "") if isinstance(body, dict) else ""
+        )
+        if code == "insufficient_quota":
+            return OutOfCreditsError(str(exc))
+        retry_after: float | None = None
+        response = getattr(exc, "response", None)
+        if response is not None:
+            raw = response.headers.get("retry-after")
+            if raw:
+                try:
+                    retry_after = float(raw)
+                except ValueError:
+                    pass
+        return RateLimitError(str(exc), retry_after=retry_after)
+    if isinstance(exc, (_OpenAIConnectionError, _OpenAITimeoutError)):
+        return RetryableError(str(exc))
+    if isinstance(exc, _OpenAIStatusError) and exc.status_code >= 500:
+        return RetryableError(str(exc), status_code=exc.status_code)
+    return exc
 
 
 class OpenAICompatible(ChatModel):
@@ -60,20 +93,26 @@ class OpenAICompatible(ChatModel):
         tool_choice: Literal["auto", "required", "none"] = "auto",
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
-        params = self._merge_params(kwargs)
-        converted_messages = self._convert_messages(messages)
+        try:
+            params = self._merge_params(kwargs)
+            converted_messages = self._convert_messages(messages)
 
-        if output_format is not None:
-            return await self._invoke_with_structured_output(
-                converted_messages, output_format, params
-            )
+            if output_format is not None:
+                return await self._invoke_with_structured_output(
+                    converted_messages, output_format, params
+                )
 
-        if tools:
-            return await self._invoke_with_tools(
-                converted_messages, tools, params, tool_choice
-            )
+            if tools:
+                return await self._invoke_with_tools(
+                    converted_messages, tools, params, tool_choice
+                )
 
-        return await self._invoke_plain(converted_messages, params)
+            return await self._invoke_plain(converted_messages, params)
+        except Exception as exc:
+            mapped = _map_openai_error(exc)
+            if mapped is not exc:
+                raise mapped from exc
+            raise
 
     async def _invoke_with_structured_output[T: BaseModel](
         self, messages: list[dict], output_format: type[T], params: dict[str, Any]
@@ -243,59 +282,71 @@ class OpenAICompatible(ChatModel):
             request_args["tools"] = openai_tools
             request_args["tool_choice"] = tool_choice
 
-        stream = await self._client.chat.completions.create(**request_args)
+        try:
+            stream = await self._client.chat.completions.create(**request_args)
+        except Exception as exc:
+            mapped = _map_openai_error(exc)
+            if mapped is not exc:
+                raise mapped from exc
+            raise
 
         buffers: dict[int, dict[str, Any]] = {}
         text_acc: list[str] = []
         stop_reason: str | None = None
         usage: ChatInvokeUsage | None = None
 
-        chunk: ChatCompletionChunk
-        async for chunk in stream:
-            if chunk.usage is not None:
-                usage = self._parse_usage(chunk.usage)
+        try:
+            chunk: ChatCompletionChunk
+            async for chunk in stream:
+                if chunk.usage is not None:
+                    usage = self._parse_usage(chunk.usage)
 
-            if not chunk.choices:
-                continue
+                if not chunk.choices:
+                    continue
 
-            choice = chunk.choices[0]
-            delta = choice.delta
+                choice = chunk.choices[0]
+                delta = choice.delta
 
-            if delta.content:
-                text_acc.append(delta.content)
-                yield StreamTextDelta(delta=delta.content)
+                if delta.content:
+                    text_acc.append(delta.content)
+                    yield StreamTextDelta(delta=delta.content)
 
-            for tc_delta in delta.tool_calls or []:
-                buf = buffers.setdefault(
-                    tc_delta.index,
-                    {"id": "", "name": "", "arguments": "", "emitted": False},
-                )
-                if tc_delta.id:
-                    buf["id"] = tc_delta.id
-
-                if tc_delta.function:
-                    if tc_delta.function.name:
-                        buf["name"] = tc_delta.function.name
-                    if tc_delta.function.arguments:
-                        buf["arguments"] += tc_delta.function.arguments
-
-            if choice.finish_reason:
-                stop_reason = choice.finish_reason
-                for idx in sorted(buffers):
-                    buf = buffers[idx]
-                    if buf["emitted"]:
-                        continue
-
-                    buf["emitted"] = True
-                    yield StreamToolCall(
-                        tool_call=ToolCall(
-                            id=buf["id"],
-                            function=Function(
-                                name=buf["name"],
-                                arguments=buf["arguments"],
-                            ),
-                        )
+                for tc_delta in delta.tool_calls or []:
+                    buf = buffers.setdefault(
+                        tc_delta.index,
+                        {"id": "", "name": "", "arguments": "", "emitted": False},
                     )
+                    if tc_delta.id:
+                        buf["id"] = tc_delta.id
+
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            buf["name"] = tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            buf["arguments"] += tc_delta.function.arguments
+
+                if choice.finish_reason:
+                    stop_reason = choice.finish_reason
+                    for idx in sorted(buffers):
+                        buf = buffers[idx]
+                        if buf["emitted"]:
+                            continue
+
+                        buf["emitted"] = True
+                        yield StreamToolCall(
+                            tool_call=ToolCall(
+                                id=buf["id"],
+                                function=Function(
+                                    name=buf["name"],
+                                    arguments=buf["arguments"],
+                                ),
+                            )
+                        )
+        except Exception as exc:
+            mapped = _map_openai_error(exc)
+            if mapped is not exc:
+                raise mapped from exc
+            raise
 
         yield StreamEnd(
             stop_reason=stop_reason,
