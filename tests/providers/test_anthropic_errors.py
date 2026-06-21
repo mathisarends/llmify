@@ -15,6 +15,8 @@ from anthropic import (
 
 from llmify.base import ChatModel
 from llmify.exceptions import OutOfCreditsError
+from llmify.exceptions import AuthenticationError as LLMAuthenticationError
+from llmify.exceptions import ContextLengthExceededError
 from llmify.exceptions import RateLimitError as LLMRateLimitError
 from llmify.exceptions import RetryableError
 from llmify.messages import UserMessage
@@ -115,6 +117,32 @@ class TestMapAnthropicError:
         exc = _api_status_error(400)
         assert _map_anthropic_error(exc) is exc
 
+    def test_context_length_exceeded_maps_correctly(self) -> None:
+        body = {
+            "error": {
+                "type": "invalid_request_error",
+                "message": "prompt is too long: 273323 tokens > 200000 maximum",
+            }
+        }
+        exc = _api_status_error(400, body)
+        result = _map_anthropic_error(exc)
+        assert isinstance(result, ContextLengthExceededError)
+
+    def test_context_length_from_token_exceeded_message(self) -> None:
+        body = {
+            "error": {
+                "type": "invalid_request_error",
+                "message": "Input token count exceeds the limit of 100000",
+            }
+        }
+        exc = _api_status_error(400, body)
+        result = _map_anthropic_error(exc)
+        assert isinstance(result, ContextLengthExceededError)
+
+    def test_401_status_maps_to_authentication_error(self) -> None:
+        result = _map_anthropic_error(_api_status_error(401))
+        assert isinstance(result, LLMAuthenticationError)
+
     def test_unknown_exception_passes_through_unchanged(self) -> None:
         exc = ValueError("something else")
         assert _map_anthropic_error(exc) is exc
@@ -180,6 +208,28 @@ class TestInvokeErrorMapping:
         model = MockAnthropicModel()
         model._client.messages.create = AsyncMock(side_effect=_api_status_error(400))
         with pytest.raises(APIStatusError):
+            await model.invoke([UserMessage(content="hi")])
+
+    @pytest.mark.asyncio
+    async def test_invoke_raises_context_length_exceeded(self) -> None:
+        model = MockAnthropicModel()
+        body = {
+            "error": {
+                "type": "invalid_request_error",
+                "message": "prompt is too long: 300000 tokens > 200000 maximum",
+            }
+        }
+        model._client.messages.create = AsyncMock(
+            side_effect=_api_status_error(400, body)
+        )
+        with pytest.raises(ContextLengthExceededError):
+            await model.invoke([UserMessage(content="hi")])
+
+    @pytest.mark.asyncio
+    async def test_invoke_raises_authentication_error(self) -> None:
+        model = MockAnthropicModel()
+        model._client.messages.create = AsyncMock(side_effect=_api_status_error(401))
+        with pytest.raises(LLMAuthenticationError):
             await model.invoke([UserMessage(content="hi")])
 
 

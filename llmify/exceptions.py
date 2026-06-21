@@ -25,3 +25,17 @@ class OutOfCreditsError(LLMifyError):
 
     def __init__(self, message: str = "Out of credits"):
         super().__init__(message)
+
+
+class ContextLengthExceededError(LLMifyError):
+    """Raised when the input exceeds the model's maximum context length."""
+
+    def __init__(self, message: str = "Context length exceeded"):
+        super().__init__(message)
+
+
+class AuthenticationError(LLMifyError):
+    """Raised when the API key or credentials are invalid or missing."""
+
+    def __init__(self, message: str = "Authentication failed"):
+        super().__init__(message)

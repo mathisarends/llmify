@@ -4,6 +4,8 @@ from .exceptions import (
     RetryableError,
     RateLimitError,
     OutOfCreditsError,
+    ContextLengthExceededError,
+    AuthenticationError,
 )
 from .messages import (
     Message,
@@ -104,4 +106,6 @@ __all__ = [
     "RetryableError",
     "RateLimitError",
     "OutOfCreditsError",
+    "ContextLengthExceededError",
+    "AuthenticationError",
 ]

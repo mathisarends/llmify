@@ -15,6 +15,8 @@ from openai import (
 
 from llmify.base import ChatModel
 from llmify.exceptions import OutOfCreditsError
+from llmify.exceptions import AuthenticationError as LLMAuthenticationError
+from llmify.exceptions import ContextLengthExceededError
 from llmify.exceptions import RateLimitError as LLMRateLimitError
 from llmify.exceptions import RetryableError
 from llmify.messages import UserMessage
@@ -39,9 +41,9 @@ def _rate_limit_error(body: dict | None = None) -> RateLimitError:
     return RateLimitError(response=response, body=body or {}, message="rate limited")
 
 
-def _api_status_error(status_code: int) -> APIStatusError:
-    response = _make_openai_response(status_code, {})
-    return APIStatusError(message="server error", response=response, body={})
+def _api_status_error(status_code: int, body: dict | None = None) -> APIStatusError:
+    response = _make_openai_response(status_code, body or {})
+    return APIStatusError(message="server error", response=response, body=body or {})
 
 
 def _connection_error() -> APIConnectionError:
@@ -112,6 +114,18 @@ class TestMapOpenAIError:
         result = _map_openai_error(exc)
         assert result is exc
 
+    def test_context_length_exceeded_maps_correctly(self) -> None:
+        body = {
+            "error": {"code": "context_length_exceeded", "message": "too many tokens"}
+        }
+        exc = _api_status_error(400, body)
+        result = _map_openai_error(exc)
+        assert isinstance(result, ContextLengthExceededError)
+
+    def test_401_status_maps_to_authentication_error(self) -> None:
+        result = _map_openai_error(_api_status_error(401))
+        assert isinstance(result, LLMAuthenticationError)
+
     def test_unknown_exception_passes_through_unchanged(self) -> None:
         exc = ValueError("something else")
         assert _map_openai_error(exc) is exc
@@ -167,6 +181,25 @@ class TestInvokeErrorMapping:
             side_effect=_api_status_error(400)
         )
         with pytest.raises(APIStatusError):
+            await model.invoke([UserMessage(content="hi")])
+
+    @pytest.mark.asyncio
+    async def test_invoke_raises_context_length_exceeded(self) -> None:
+        model = MockChatModel()
+        body = {"error": {"code": "context_length_exceeded"}}
+        model._client.chat.completions.create = AsyncMock(
+            side_effect=_api_status_error(400, body)
+        )
+        with pytest.raises(ContextLengthExceededError):
+            await model.invoke([UserMessage(content="hi")])
+
+    @pytest.mark.asyncio
+    async def test_invoke_raises_authentication_error(self) -> None:
+        model = MockChatModel()
+        model._client.chat.completions.create = AsyncMock(
+            side_effect=_api_status_error(401)
+        )
+        with pytest.raises(LLMAuthenticationError):
             await model.invoke([UserMessage(content="hi")])
 
 

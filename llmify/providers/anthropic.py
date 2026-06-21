@@ -23,7 +23,13 @@ except ImportError:
 
 
 from llmify.base import ChatModel
-from llmify.exceptions import OutOfCreditsError, RateLimitError, RetryableError
+from llmify.exceptions import (
+    AuthenticationError,
+    ContextLengthExceededError,
+    OutOfCreditsError,
+    RateLimitError,
+    RetryableError,
+)
 from llmify.messages import (
     Message,
     UserMessage,
@@ -66,6 +72,25 @@ def _map_anthropic_error(exc: Exception) -> Exception:
         return RateLimitError(str(exc), retry_after=retry_after)
     if isinstance(exc, _AnthropicStatusError) and exc.status_code == 402:
         return OutOfCreditsError(str(exc))
+    if isinstance(exc, _AnthropicStatusError) and exc.status_code == 400:
+        body = getattr(exc, "body", None) or {}
+        message = (
+            (body.get("error") or {}).get("message", "")
+            if isinstance(body, dict)
+            else ""
+        )
+        msg_lower = message.lower()
+        if (
+            "too long" in msg_lower
+            or "context" in msg_lower
+            or (
+                "token" in msg_lower
+                and any(kw in msg_lower for kw in ("exceed", "maximum", "limit"))
+            )
+        ):
+            return ContextLengthExceededError(str(exc))
+    if isinstance(exc, _AnthropicStatusError) and exc.status_code == 401:
+        return AuthenticationError(str(exc))
     if isinstance(exc, (_AnthropicConnectionError, _AnthropicTimeoutError)):
         return RetryableError(str(exc))
     if isinstance(exc, _AnthropicStatusError) and exc.status_code >= 500:
