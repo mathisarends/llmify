@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from .providers.azure import ChatAzureOpenAI
     from .providers.openai_compatible import OpenAICompatible
     from .providers.anthropic import ChatAnthropic
+    from .providers.google import ChatGoogle
 
 
 def __getattr__(name: str):
@@ -69,6 +70,11 @@ def __getattr__(name: str):
 
         return ChatAnthropic
 
+    if name == "ChatGoogle":
+        from .providers.google import ChatGoogle
+
+        return ChatGoogle
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -86,6 +92,7 @@ __all__ = [
     "ChatOpenAI",
     "ChatAzureOpenAI",
     "ChatAnthropic",
+    "ChatGoogle",
     "ChatModel",
     "OpenAICompatible",
     "ChatInvokeCompletion",

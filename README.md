@@ -4,7 +4,7 @@ A lightweight, type-safe Python library for LLM chat completions.
 
 **Features:**
 
-- Simple, intuitive API for OpenAI, Azure OpenAI, and Anthropic
+- Simple, intuitive API for OpenAI, Azure OpenAI, Anthropic, and Google Gemini
 - Type-safe structured outputs with Pydantic
 - Built-in tool calling support
 - Async streaming
@@ -23,6 +23,7 @@ Install only the provider you need:
 ```bash
 pip install py-llmify[openai]      # OpenAI + Azure OpenAI
 pip install py-llmify[anthropic]   # Anthropic (Claude)
+pip install py-llmify[google]      # Google Gemini
 pip install py-llmify[all]         # All providers
 ```
 
@@ -321,6 +322,9 @@ export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com/"
 
 # Anthropic
 export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Google Gemini
+export GEMINI_API_KEY="..."
 ```
 
 ### Model Parameters
@@ -380,6 +384,19 @@ llm = ChatAnthropic(
 ```
 
 The Anthropic provider supports the same API surface — `invoke`, `stream`, structured output, and tool calling — all mapped to the Anthropic messages API under the hood.
+
+### Google Gemini
+
+```python
+from llmify import ChatGoogle
+
+llm = ChatGoogle(
+    model="gemini-3.5-flash",
+    api_key="...",  # optional if GEMINI_API_KEY is set
+)
+```
+
+The Google provider supports the same API surface: `invoke`, `stream`, structured output, and tool calling.
 
 ## Design Philosophy
 

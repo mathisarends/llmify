@@ -31,6 +31,11 @@ def __getattr__(name: str):
 
         return ChatAnthropic
 
+    if name == "ChatGoogle":
+        from .google import ChatGoogle
+
+        return ChatGoogle
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -38,6 +43,7 @@ __all__ = [
     "ChatOpenAI",
     "ChatAzureOpenAI",
     "ChatAnthropic",
+    "ChatGoogle",
     "ChatModel",
     "OpenAICompatible",
     "ChatInvokeCompletion",
