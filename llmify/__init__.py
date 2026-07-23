@@ -42,11 +42,11 @@ from .tokens import (
 )
 
 if TYPE_CHECKING:
-    from .providers.openai import ChatOpenAI
+    from .providers.openai import ChatOpenAI, OpenAIModel
     from .providers.azure import ChatAzureOpenAI
     from .providers.openai_compatible import OpenAICompatible
-    from .providers.anthropic import ChatAnthropic
-    from .providers.google import ChatGoogle
+    from .providers.anthropic import ChatAnthropic, AnthropicModel
+    from .providers.google import ChatGoogle, GoogleModel
 
 
 def __getattr__(name: str):
@@ -54,6 +54,11 @@ def __getattr__(name: str):
         from .providers.openai import ChatOpenAI
 
         return ChatOpenAI
+
+    if name == "OpenAIModel":
+        from .providers.openai import OpenAIModel
+
+        return OpenAIModel
 
     if name == "ChatAzureOpenAI":
         from .providers.azure import ChatAzureOpenAI
@@ -70,10 +75,20 @@ def __getattr__(name: str):
 
         return ChatAnthropic
 
+    if name == "AnthropicModel":
+        from .providers.anthropic import AnthropicModel
+
+        return AnthropicModel
+
     if name == "ChatGoogle":
         from .providers.google import ChatGoogle
 
         return ChatGoogle
+
+    if name == "GoogleModel":
+        from .providers.google import GoogleModel
+
+        return GoogleModel
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -90,9 +105,12 @@ __all__ = [
     "ContentPartImageParam",
     "ImageURL",
     "ChatOpenAI",
+    "OpenAIModel",
     "ChatAzureOpenAI",
     "ChatAnthropic",
+    "AnthropicModel",
     "ChatGoogle",
+    "GoogleModel",
     "ChatModel",
     "OpenAICompatible",
     "ChatInvokeCompletion",

@@ -1,5 +1,6 @@
 import os
 import httpx
+from enum import StrEnum
 from typing import Any
 
 try:
@@ -13,10 +14,26 @@ except ImportError:
 from llmify.providers.openai_compatible import OpenAICompatible
 
 
+class OpenAIModel(StrEnum):
+    GPT_5_6_SOL = "gpt-5.6-sol"
+    GPT_5_6_TERRA = "gpt-5.6-terra"
+    GPT_5_6_LUNA = "gpt-5.6-luna"
+
+    GPT_5_5 = "gpt-5.5"
+    GPT_5_5_PRO = "gpt-5.5-pro"
+
+    GPT_5_4 = "gpt-5.4"
+    GPT_5_4_PRO = "gpt-5.4-pro"
+    GPT_5_4_MINI = "gpt-5.4-mini"
+    GPT_5_4_NANO = "gpt-5.4-nano"
+
+    GPT_5_3_CODEX = "gpt-5.3-codex"
+
+
 class ChatOpenAI(OpenAICompatible):
     def __init__(
         self,
-        model: str = "gpt-5.4-mini",
+        model: str | OpenAIModel = OpenAIModel.GPT_5_6_TERRA,
         api_key: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,

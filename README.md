@@ -1,5 +1,7 @@
 # llmify
 
+![llmify banner](static/banner.png)
+
 A lightweight, type-safe Python library for LLM chat completions.
 
 **Features:**

@@ -1,6 +1,7 @@
 import json
 import os
 from collections.abc import AsyncIterator
+from enum import StrEnum
 from typing import Any, Literal, overload
 
 import httpx
@@ -72,13 +73,23 @@ def _map_google_error(exc: Exception) -> Exception:
     return exc
 
 
+class GoogleModel(StrEnum):
+    GEMINI_3_6_FLASH = "gemini-3.6-flash"
+    GEMINI_3_5_FLASH = "gemini-3.5-flash"
+    GEMINI_3_5_FLASH_LITE = "gemini-3.5-flash-lite"
+    GEMINI_3_1_FLASH_LITE = "gemini-3.1-flash-lite"
+
+    GEMINI_3_1_PRO_PREVIEW = "gemini-3.1-pro-preview"
+    GEMINI_3_FLASH_PREVIEW = "gemini-3-flash-preview"
+
+
 class ChatGoogle(ChatModel):
     _client: Any
     _model: str
 
     def __init__(
         self,
-        model: str = "gemini-3.5-flash",
+        model: str | GoogleModel = "gemini-3.5-flash",
         api_key: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,

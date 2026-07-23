@@ -1,6 +1,7 @@
 import os
 import json
 import httpx
+from enum import StrEnum
 from typing import Literal, Any, overload
 from collections.abc import AsyncIterator
 
@@ -98,13 +99,24 @@ def _map_anthropic_error(exc: Exception) -> Exception:
     return exc
 
 
+class AnthropicModel(StrEnum):
+    CLAUDE_FABLE_5 = "claude-fable-5"
+    CLAUDE_OPUS_4_8 = "claude-opus-4-8"
+    CLAUDE_SONNET_5 = "claude-sonnet-5"
+    CLAUDE_HAIKU_4_5 = "claude-haiku-4-5"
+
+    CLAUDE_OPUS_4_7 = "claude-opus-4-7"
+    CLAUDE_OPUS_4_6 = "claude-opus-4-6"
+    CLAUDE_SONNET_4_6 = "claude-sonnet-4-6"
+
+
 class ChatAnthropic(ChatModel):
     _client: AsyncAnthropic
     _model: str
 
     def __init__(
         self,
-        model: str = "claude-sonnet-4-20250514",
+        model: str | AnthropicModel = "claude-sonnet-4-20250514",
         api_key: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
