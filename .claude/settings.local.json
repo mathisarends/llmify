@@ -14,7 +14,9 @@
       "Bash(magick -version)",
       "Bash(ffmpeg -version)",
       "Bash(git add *)",
-      "Bash(pre-commit run *)"
+      "Bash(pre-commit run *)",
+      "Read(//c/code/tokenary/**)",
+      "Read(//c/code/tokenary/examples/**)"
     ]
   }
 }

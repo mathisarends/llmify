@@ -11,7 +11,7 @@ A lightweight, type-safe Python library for LLM chat completions.
 - Built-in tool calling support
 - Async streaming
 - Image analysis support
-- Built-in token usage tracking
+- Optional token usage and cost tracking
 - Minimal dependencies, maximum flexibility
 
 ## Installation
@@ -27,6 +27,14 @@ pip install py-llmify[openai]      # OpenAI + Azure OpenAI
 pip install py-llmify[anthropic]   # Anthropic (Claude)
 pip install py-llmify[google]      # Google Gemini
 pip install py-llmify[all]         # All providers
+pip install py-llmify[tokens]      # Token tracking + Tokenary cost calculation
+```
+
+The `tokens` extra currently requires Python 3.13 because that is the minimum
+Python version supported by Tokenary. Extras can be combined, for example:
+
+```bash
+pip install py-llmify[openai,tokens]
 ```
 
 ## Quick Start
@@ -275,38 +283,60 @@ llm = ChatOpenAI(model="gpt-4o")
 print(llm.model)  # "gpt-4o"
 ```
 
-Token tracking itself is **opt-in** — nothing is recorded unless you ask for it.
-Create a `TokenTracker` and feed it the usage you care about. Its `add` method
-accepts a `ChatInvokeUsage`, a full `ChatInvokeCompletion`, or a `StreamEnd` event,
-together with the model name (conveniently available as `llm.model`). The same
-tracker can aggregate usage across many calls and even multiple models:
+Token tracking is an optional feature. Install `py-llmify[tokens]`, then create a
+`TokenTracker` and feed it the usage you care about. Its `add` method accepts a
+`ChatInvokeUsage`, a full `ChatInvokeCompletion`, or a `StreamEnd` event, together
+with the model name (conveniently available as `llm.model`). The same tracker can
+aggregate usage and Tokenary-backed USD costs across many calls and models:
 
 ```python
-from llmify import ChatOpenAI, ChatAnthropic, TokenTracker, UserMessage
+from llmify import ChatOpenAI, ChatAnthropic, UserMessage
+from llmify.tokens import ModelName, TokenTracker, calculate_cost, calculate_costs
 
 tracker = TokenTracker()
-gpt = ChatOpenAI(model="gpt-4o")
-claude = ChatAnthropic(model="claude-sonnet-4-20250514")
+gpt_model = ModelName.GPT_4O
+claude_model = ModelName.CLAUDE_SONNET_4_20250514
+gpt = ChatOpenAI(model=gpt_model)
+claude = ChatAnthropic(model=claude_model)
 
 # Pass the completion object directly...
 r1 = await gpt.invoke([UserMessage(content="Hi")])
-tracker.add(r1, model=gpt.model)
+tracker.add(r1, model=gpt_model)
+
+r2 = await gpt.invoke([UserMessage(content="How are you?")])
+tracker.add(r2, model=gpt_model)
 
 # ...or a StreamEnd event (or a raw ChatInvokeUsage).
 async for event in claude.stream([UserMessage(content="Hi")]):
     if event.type == "end":
-        tracker.add(event, model=claude.model)
+        tracker.add(event, model=claude_model)
 
 summary = tracker.summary()     # UsageSummary across both providers
-print(summary.entry_count)              # 2
+print(summary.entry_count)              # 3
 print(summary.total_tokens)             # e.g. 84
 print(summary.total_prompt_tokens)
 print(summary.total_completion_tokens)
 print(summary.total_prompt_cached_tokens)
 
+cost = calculate_cost(r1, model=gpt_model)  # Tokenary CostBreakdown
+print(cost.total_cost)
+
+# Aggregate an existing same-model chain without building a tracker.
+chain_cost = calculate_costs([r1, r2], model=gpt_model)
+print(chain_cost.total_cost)
+
+# A tracker also supports multi-model chains because every entry is tagged.
+cost_summary = tracker.cost_summary()
+print(cost_summary.currency)                # "USD"
+print(cost_summary.total_cost)
+print(tracker.costs())                      # per-call Tokenary CostBreakdown list
+
 print(tracker.entries)          # per-call TokenUsageEntry list (each tagged with `model`)
 tracker.reset()                 # start a fresh accounting window
 ```
+
+Cost calculation uses Tokenary's bundled model catalog. An unknown model raises
+`KeyError`; missing usage raises `ValueError`.
 
 Full runnable example: `examples/token_tracking.py`
 

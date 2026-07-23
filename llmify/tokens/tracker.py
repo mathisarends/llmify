@@ -1,9 +1,15 @@
 from __future__ import annotations
 
-from llmify.tokens.views import TokenUsageEntry, UsageSummary
+from typing import TYPE_CHECKING
+
+from tokenary import ModelName
+
+from llmify.tokens.views import CostSummary, TokenUsageEntry, UsageSummary
 from llmify.views import ChatInvokeCompletion, ChatInvokeUsage, StreamEnd
 
-# Anything that carries (or is) a usage record can be handed to the tracker.
+if TYPE_CHECKING:
+    from tokenary import CostBreakdown
+
 type Trackable = ChatInvokeUsage | ChatInvokeCompletion | StreamEnd | None
 
 
@@ -12,22 +18,14 @@ def _resolve_usage(usage: Trackable) -> ChatInvokeUsage | None:
         return None
     if isinstance(usage, ChatInvokeUsage):
         return usage
-    # ChatInvokeCompletion / StreamEnd both expose `.usage`.
     return usage.usage
 
 
 class TokenTracker:
-    """Collects token usage across many calls and aggregates it on demand.
-
-    The tracker is provider-agnostic: hand it the ``usage`` from any response
-    (or the response/stream-end object itself) together with the model name.
-    """
-
     def __init__(self) -> None:
         self._entries: list[TokenUsageEntry] = []
 
-    def add(self, usage: Trackable, model: str) -> None:
-        """Record a usage event for ``model``. No-ops if there is nothing to record."""
+    def add(self, usage: Trackable, model: ModelName) -> None:
         resolved = _resolve_usage(usage)
         if resolved is None:
             return
@@ -67,3 +65,13 @@ class TokenTracker:
                 e.prompt_cached_tokens or 0 for e in self._entries
             ),
         )
+
+    def costs(self) -> list[CostBreakdown]:
+        from llmify.tokens.costs import calculate_cost
+
+        return [calculate_cost(entry) for entry in self._entries]
+
+    def cost_summary(self) -> CostSummary:
+        from llmify.tokens.costs import calculate_costs
+
+        return calculate_costs(self._entries)
