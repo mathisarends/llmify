@@ -6,7 +6,7 @@ A lightweight, type-safe Python library for LLM chat completions.
 
 **Features:**
 
-- Simple, intuitive API for OpenAI, Azure OpenAI, Anthropic, and Google Gemini
+- Simple, intuitive API for OpenAI, Azure OpenAI, Cerebras, Anthropic, and Google Gemini
 - Type-safe structured outputs with Pydantic
 - Built-in tool calling support
 - Async streaming
@@ -24,6 +24,7 @@ Install only the provider you need:
 
 ```bash
 pip install py-llmify[openai]      # OpenAI + Azure OpenAI
+pip install py-llmify[cerebras]    # Cerebras
 pip install py-llmify[anthropic]   # Anthropic (Claude)
 pip install py-llmify[google]      # Google Gemini
 pip install py-llmify[all]         # All providers
@@ -352,6 +353,9 @@ export OPENAI_API_KEY="sk-..."
 export AZURE_OPENAI_API_KEY="..."
 export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com/"
 
+# Cerebras
+export CEREBRAS_API_KEY="csk-..."
+
 # Anthropic
 export ANTHROPIC_API_KEY="sk-ant-..."
 
@@ -416,6 +420,19 @@ llm = ChatAnthropic(
 ```
 
 The Anthropic provider supports the same API surface — `invoke`, `stream`, structured output, and tool calling — all mapped to the Anthropic messages API under the hood.
+
+### Cerebras
+
+```python
+from llmify import ChatCerebras
+
+llm = ChatCerebras(
+    model="gpt-oss-120b",
+    api_key="csk-...",  # optional if CEREBRAS_API_KEY is set
+)
+```
+
+The Cerebras provider uses Cerebras' OpenAI-compatible API and supports `invoke`, `stream`, structured output, and tool calling.
 
 ### Google Gemini
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "py-llmify"
 version = "0.6.0"
-description = "A minimal, fast, and type-safe Python library for LLM chat completions with OpenAI and Azure OpenAI support"
+description = "A minimal, fast, and type-safe Python library for LLM chat completions across multiple providers"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openai = ["openai>=2.14.0"]
+cerebras = ["openai>=2.14.0"]
 anthropic = ["anthropic>=0.86.0"]
 google = ["google-genai>=2.10.0"]
 tokens = ["tokenary>=0.1.1"]

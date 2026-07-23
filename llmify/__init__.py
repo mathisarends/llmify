@@ -39,6 +39,7 @@ from .tools import (
 if TYPE_CHECKING:
     from .providers.openai import ChatOpenAI, OpenAIModel
     from .providers.azure import ChatAzureOpenAI
+    from .providers.cerebras import ChatCerebras, CerebrasModel
     from .providers.openai_compatible import OpenAICompatible
     from .providers.anthropic import ChatAnthropic, AnthropicModel
     from .providers.google import ChatGoogle, GoogleModel
@@ -59,6 +60,16 @@ def __getattr__(name: str):
         from .providers.azure import ChatAzureOpenAI
 
         return ChatAzureOpenAI
+
+    if name == "ChatCerebras":
+        from .providers.cerebras import ChatCerebras
+
+        return ChatCerebras
+
+    if name == "CerebrasModel":
+        from .providers.cerebras import CerebrasModel
+
+        return CerebrasModel
 
     if name == "OpenAICompatible":
         from .providers.openai_compatible import OpenAICompatible
@@ -102,6 +113,8 @@ __all__ = [
     "ChatOpenAI",
     "OpenAIModel",
     "ChatAzureOpenAI",
+    "ChatCerebras",
+    "CerebrasModel",
     "ChatAnthropic",
     "AnthropicModel",
     "ChatGoogle",
