@@ -430,10 +430,6 @@ llm = ChatGoogle(
 
 The Google provider supports the same API surface: `invoke`, `stream`, structured output, and tool calling.
 
-## Design Philosophy
-
-Thin wrapper around official SDKs with minimal dependencies and no unnecessary abstractions. Full type hints throughout, Pydantic for all messages and responses, async-first.
-
 ## Credits
 
 Inspired by [LangChain](https://github.com/langchain-ai/langchain) and [browser-use](https://github.com/browser-use/browser-use).
