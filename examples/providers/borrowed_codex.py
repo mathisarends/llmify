@@ -1,10 +1,11 @@
 """Call a Codex endpoint with a borrowed ChatGPT session.
 
-Put the values into your environment (see `.env.example`):
+The Codex backend only speaks the Responses API, so this uses `OpenAIResponses`
+instead of `ChatOpenAI`. Put the values into your environment (see `.env.example`):
 
     CODEX_ACCESS_KEY   access token of the ChatGPT session
     CODEX_ACCOUNT_ID   account id sent as `ChatGPT-Account-Id` header
-    CODEX_BASE_URL     endpoint the token is valid for
+    CODEX_MODEL        model slug to call
 """
 
 import asyncio
@@ -12,16 +13,18 @@ import os
 
 from dotenv import load_dotenv
 
-from llmify import ChatOpenAI, SystemMessage, UserMessage
+from llmify import OpenAIResponses, SystemMessage, UserMessage
 
 load_dotenv(override=True)
 
+CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
+
 
 async def main() -> None:
-    llm = ChatOpenAI(
+    llm = OpenAIResponses(
         model=os.environ["CODEX_MODEL"],
         api_key=os.environ["CODEX_ACCESS_KEY"],
-        base_url="https://chatgpt.com/backend-api/codex",
+        base_url=CODEX_BASE_URL,
         default_headers={"ChatGPT-Account-Id": os.environ["CODEX_ACCOUNT_ID"]},
     )
 
@@ -32,6 +35,7 @@ async def main() -> None:
         ]
     )
     print(response.completion)
+    print(response.usage)
 
 
 if __name__ == "__main__":

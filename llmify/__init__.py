@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from .providers.azure import ChatAzureOpenAI
     from .providers.cerebras import ChatCerebras, CerebrasModel
     from .providers.openai_compatible import OpenAICompatible
+    from .providers.openai_responses import OpenAIResponses
     from .providers.anthropic import ChatAnthropic, AnthropicModel
     from .providers.google import ChatGoogle, GoogleModel
 
@@ -76,6 +77,11 @@ def __getattr__(name: str):
         from .providers.openai_compatible import OpenAICompatible
 
         return OpenAICompatible
+
+    if name == "OpenAIResponses":
+        from .providers.openai_responses import OpenAIResponses
+
+        return OpenAIResponses
 
     if name == "ChatAnthropic":
         from .providers.anthropic import ChatAnthropic
@@ -122,6 +128,7 @@ __all__ = [
     "GoogleModel",
     "ChatModel",
     "OpenAICompatible",
+    "OpenAIResponses",
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
     "StreamEventType",

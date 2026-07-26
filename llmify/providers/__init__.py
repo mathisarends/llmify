@@ -31,6 +31,11 @@ def __getattr__(name: str):
 
         return OpenAICompatible
 
+    if name == "OpenAIResponses":
+        from .openai_responses import OpenAIResponses
+
+        return OpenAIResponses
+
     if name == "ChatAnthropic":
         from .anthropic import ChatAnthropic
 
@@ -52,6 +57,7 @@ __all__ = [
     "ChatGoogle",
     "ChatModel",
     "OpenAICompatible",
+    "OpenAIResponses",
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
     "StreamEventType",
