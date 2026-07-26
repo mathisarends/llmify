@@ -23,8 +23,8 @@ except ImportError:
 
 from llmify.base import ChatModel
 from llmify.exceptions import (
-    AuthenticationError,
     ContextLengthExceededError,
+    CredentialsUnavailableError,
     OutOfCreditsError,
     RateLimitError,
     RetryableError,
@@ -78,7 +78,7 @@ def _map_openai_error(exc: Exception) -> Exception:
         if code == "context_length_exceeded":
             return ContextLengthExceededError(str(exc))
     if isinstance(exc, _OpenAIStatusError) and exc.status_code == 401:
-        return AuthenticationError(str(exc))
+        return CredentialsUnavailableError(str(exc))
     if isinstance(exc, (_OpenAIConnectionError, _OpenAITimeoutError)):
         return RetryableError(str(exc))
     if isinstance(exc, _OpenAIStatusError) and exc.status_code >= 500:

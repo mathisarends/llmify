@@ -14,7 +14,7 @@ from openai import (
 )
 
 from llmify.base import ChatModel
-from llmify.exceptions import OutOfCreditsError
+from llmify.exceptions import CredentialsUnavailableError, OutOfCreditsError
 from llmify.exceptions import AuthenticationError as LLMAuthenticationError
 from llmify.exceptions import ContextLengthExceededError
 from llmify.exceptions import RateLimitError as LLMRateLimitError
@@ -126,6 +126,15 @@ class TestMapOpenAIError:
         result = _map_openai_error(_api_status_error(401))
         assert isinstance(result, LLMAuthenticationError)
 
+    def test_401_status_maps_to_credentials_unavailable(self) -> None:
+        body = {"detail": "Your authentication token is not from a valid issuer."}
+        result = _map_openai_error(_api_status_error(401, body))
+        assert isinstance(result, CredentialsUnavailableError)
+
+    def test_403_status_passes_through_unchanged(self) -> None:
+        exc = _api_status_error(403)
+        assert _map_openai_error(exc) is exc
+
     def test_unknown_exception_passes_through_unchanged(self) -> None:
         exc = ValueError("something else")
         assert _map_openai_error(exc) is exc
@@ -199,7 +208,7 @@ class TestInvokeErrorMapping:
         model._client.chat.completions.create = AsyncMock(
             side_effect=_api_status_error(401)
         )
-        with pytest.raises(LLMAuthenticationError):
+        with pytest.raises(CredentialsUnavailableError):
             await model.invoke([UserMessage(content="hi")])
 
 
@@ -239,6 +248,29 @@ class TestStreamErrorMapping:
         model._client.chat.completions.create = AsyncMock(return_value=mock_stream)
 
         with pytest.raises(RetryableError):
+            await _collect(model.stream([UserMessage(content="hi")]))
+
+    @pytest.mark.asyncio
+    async def test_stream_raises_credentials_unavailable_on_create(self) -> None:
+        model = MockChatModel()
+        model._client.chat.completions.create = AsyncMock(
+            side_effect=_api_status_error(401)
+        )
+        with pytest.raises(CredentialsUnavailableError):
+            await _collect(model.stream([UserMessage(content="hi")]))
+
+    @pytest.mark.asyncio
+    async def test_stream_raises_credentials_unavailable_during_iteration(self) -> None:
+        model = MockChatModel()
+
+        async def _failing_stream():
+            yield SimpleNamespace(usage=None, choices=[])
+            raise _api_status_error(401)
+
+        model._client.chat.completions.create = AsyncMock(
+            return_value=_failing_stream()
+        )
+        with pytest.raises(CredentialsUnavailableError):
             await _collect(model.stream([UserMessage(content="hi")]))
 
     @pytest.mark.asyncio

@@ -393,8 +393,13 @@ from llmify import ChatOpenAI
 llm = ChatOpenAI(
     model="gpt-4o",
     api_key="sk-...",  # optional if OPENAI_API_KEY is set
+    base_url="https://...",  # optional, defaults to the OpenAI API
+    default_headers={"X-My-Header": "value"},  # optional
 )
 ```
+
+`api_key` also accepts an async callable (`() -> str`), which is awaited before every
+request — useful for short-lived tokens that need refreshing.
 
 ### Azure OpenAI
 

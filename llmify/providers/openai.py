@@ -1,5 +1,6 @@
 import os
 import httpx
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import Any
 
@@ -34,7 +35,8 @@ class ChatOpenAI(OpenAICompatible):
     def __init__(
         self,
         model: str | OpenAIModel = OpenAIModel.GPT_5_6_TERRA,
-        api_key: str | None = None,
+        api_key: str | Callable[[], Awaitable[str]] | None = None,
+        base_url: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -67,6 +69,7 @@ class ChatOpenAI(OpenAICompatible):
 
         self._client = AsyncOpenAI(
             api_key=api_key,
+            base_url=base_url,
             timeout=timeout,
             max_retries=max_retries,
             default_headers=default_headers,

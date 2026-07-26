@@ -39,3 +39,10 @@ class AuthenticationError(LLMifyError):
 
     def __init__(self, message: str = "Authentication failed"):
         super().__init__(message)
+
+
+class CredentialsUnavailableError(AuthenticationError):
+    """Raised when credentials were rejected or cannot be obtained, and new ones must be acquired (e.g. a re-login)."""
+
+    def __init__(self, message: str = "Credentials unavailable"):
+        super().__init__(message)

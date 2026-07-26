@@ -6,6 +6,7 @@ from .exceptions import (
     OutOfCreditsError,
     ContextLengthExceededError,
     AuthenticationError,
+    CredentialsUnavailableError,
 )
 from .messages import (
     Message,
@@ -138,4 +139,5 @@ __all__ = [
     "OutOfCreditsError",
     "ContextLengthExceededError",
     "AuthenticationError",
+    "CredentialsUnavailableError",
 ]
