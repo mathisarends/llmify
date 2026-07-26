@@ -6,7 +6,7 @@ A lightweight, type-safe Python library for LLM chat completions.
 
 **Features:**
 
-- Simple, intuitive API for OpenAI, Azure OpenAI, Cerebras, Anthropic, and Google Gemini
+- Simple, intuitive API for OpenAI, Codex, Azure OpenAI, Cerebras, Anthropic, and Google Gemini
 - Type-safe structured outputs with Pydantic
 - Built-in tool calling support
 - Async streaming
@@ -349,6 +349,10 @@ Full runnable example: `examples/token_tracking.py`
 # OpenAI
 export OPENAI_API_KEY="sk-..."
 
+# Codex
+export CODEX_ACCESS_KEY="..."
+export CODEX_ACCOUNT_ID="..."
+
 # Azure OpenAI
 export AZURE_OPENAI_API_KEY="..."
 export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com/"
@@ -400,6 +404,22 @@ llm = ChatOpenAI(
 
 `api_key` also accepts an async callable (`() -> str`), which is awaited before every
 request — useful for short-lived tokens that need refreshing.
+
+### Codex
+
+```python
+from llmify import ChatCodex
+
+llm = ChatCodex(
+    model="gpt-5.6-terra",
+    api_key="...",  # optional if CODEX_ACCESS_KEY is set
+    chatgpt_account_id="...",
+)
+```
+
+`ChatCodex` uses the Codex Responses endpoint and configures the required
+`ChatGPT-Account-Id` header from `chatgpt_account_id`. The endpoint URL is fixed by
+the provider and does not need to be supplied by callers.
 
 ### Azure OpenAI
 

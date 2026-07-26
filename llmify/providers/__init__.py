@@ -26,15 +26,15 @@ def __getattr__(name: str):
 
         return ChatCerebras
 
+    if name == "ChatCodex":
+        from .codex import ChatCodex
+
+        return ChatCodex
+
     if name == "OpenAICompatible":
         from .openai_compatible import OpenAICompatible
 
         return OpenAICompatible
-
-    if name == "OpenAIResponses":
-        from .openai_responses import OpenAIResponses
-
-        return OpenAIResponses
 
     if name == "ChatAnthropic":
         from .anthropic import ChatAnthropic
@@ -53,11 +53,11 @@ __all__ = [
     "ChatOpenAI",
     "ChatAzureOpenAI",
     "ChatCerebras",
+    "ChatCodex",
     "ChatAnthropic",
     "ChatGoogle",
     "ChatModel",
     "OpenAICompatible",
-    "OpenAIResponses",
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
     "StreamEventType",

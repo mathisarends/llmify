@@ -1,21 +1,30 @@
-import os
 import json
-import httpx
-from enum import StrEnum
-from typing import Literal, Any, overload
+import os
 from collections.abc import AsyncIterator
+from enum import StrEnum
+from typing import Any, Literal, overload
 
+import httpx
 from pydantic import BaseModel
 
 try:
     from anthropic import (
-        AsyncAnthropic,
-        RateLimitError as _AnthropicRateLimitError,
         APIConnectionError as _AnthropicConnectionError,
-        APITimeoutError as _AnthropicTimeoutError,
+    )
+    from anthropic import (
         APIStatusError as _AnthropicStatusError,
     )
-    from anthropic.types import Message as AnthropicMessage, Usage as AnthropicUsage
+    from anthropic import (
+        APITimeoutError as _AnthropicTimeoutError,
+    )
+    from anthropic import (
+        AsyncAnthropic,
+    )
+    from anthropic import (
+        RateLimitError as _AnthropicRateLimitError,
+    )
+    from anthropic.types import Message as AnthropicMessage
+    from anthropic.types import Usage as AnthropicUsage
 except ImportError:
     raise ImportError(
         "The 'anthropic' package is required for ChatAnthropic. "
@@ -32,15 +41,15 @@ from llmify.exceptions import (
     RetryableError,
 )
 from llmify.messages import (
-    Message,
-    UserMessage,
-    SystemMessage,
     AssistantMessage,
-    ToolResultMessage,
-    ContentPartTextParam,
     ContentPartImageParam,
+    ContentPartTextParam,
     Function,
+    Message,
+    SystemMessage,
     ToolCall,
+    ToolResultMessage,
+    UserMessage,
 )
 from llmify.tools import Tool
 from llmify.views import (
@@ -55,26 +64,24 @@ from llmify.views import (
 
 def _map_anthropic_error(exc: Exception) -> Exception:
     if isinstance(exc, _AnthropicRateLimitError):
-        body = getattr(exc, "body", None) or {}
+        body = exc.body or {}
         error_type = (
             (body.get("error") or {}).get("type", "") if isinstance(body, dict) else ""
         )
         if error_type == "credit_balance_too_low":
             return OutOfCreditsError(str(exc))
         retry_after: float | None = None
-        response = getattr(exc, "response", None)
-        if response is not None:
-            raw = response.headers.get("retry-after")
-            if raw:
-                try:
-                    retry_after = float(raw)
-                except ValueError:
-                    pass
+        raw = exc.response.headers.get("retry-after")
+        if raw:
+            try:
+                retry_after = float(raw)
+            except ValueError:
+                pass
         return RateLimitError(str(exc), retry_after=retry_after)
     if isinstance(exc, _AnthropicStatusError) and exc.status_code == 402:
         return OutOfCreditsError(str(exc))
     if isinstance(exc, _AnthropicStatusError) and exc.status_code == 400:
-        body = getattr(exc, "body", None) or {}
+        body = exc.body or {}
         message = (
             (body.get("error") or {}).get("message", "")
             if isinstance(body, dict)
@@ -108,6 +115,159 @@ class AnthropicModel(StrEnum):
     CLAUDE_OPUS_4_7 = "claude-opus-4-7"
     CLAUDE_OPUS_4_6 = "claude-opus-4-6"
     CLAUDE_SONNET_4_6 = "claude-sonnet-4-6"
+
+
+def _build_params(
+    model: str, messages: list[Message], merged: dict[str, Any]
+) -> dict[str, Any]:
+    system_text, converted = _convert_messages(messages)
+
+    params: dict[str, Any] = {
+        "model": model,
+        "messages": converted,
+        "max_tokens": merged.pop("max_tokens", 4096) or 4096,
+    }
+
+    if system_text:
+        params["system"] = system_text
+
+    if "temperature" in merged:
+        params["temperature"] = merged.pop("temperature")
+    if "top_p" in merged:
+        params["top_p"] = merged.pop("top_p")
+    if "stop" in merged:
+        stop = merged.pop("stop")
+        params["stop_sequences"] = [stop] if isinstance(stop, str) else stop
+
+    # Remove OpenAI-specific params that Anthropic doesn't support.
+    merged.pop("frequency_penalty", None)
+    merged.pop("presence_penalty", None)
+    merged.pop("seed", None)
+    merged.pop("response_format", None)
+
+    params.update(merged)
+    return params
+
+
+def _extract_text(response: AnthropicMessage) -> str:
+    return "".join(block.text for block in response.content if block.type == "text")
+
+
+def _parse_usage(usage: AnthropicUsage) -> ChatInvokeUsage:
+    return ChatInvokeUsage(
+        prompt_tokens=usage.input_tokens,
+        completion_tokens=usage.output_tokens,
+        total_tokens=usage.input_tokens + usage.output_tokens,
+        prompt_cached_tokens=usage.cache_read_input_tokens,
+        prompt_cache_creation_tokens=usage.cache_creation_input_tokens,
+    )
+
+
+def _parse_tool_calls(response: AnthropicMessage) -> list[ToolCall]:
+    return [
+        ToolCall(
+            id=block.id,
+            function=Function(
+                name=block.name,
+                arguments=json.dumps(block.input),
+            ),
+        )
+        for block in response.content
+        if block.type == "tool_use"
+    ]
+
+
+def _convert_tool(tool: Tool) -> dict[str, Any]:
+    openai_schema = tool.to_openai_schema()
+    function = openai_schema.get("function", openai_schema)
+    return {
+        "name": function["name"],
+        "description": function.get("description", ""),
+        "input_schema": function.get("parameters", {}),
+    }
+
+
+def _convert_tools(tools: list[Tool | dict]) -> list[dict]:
+    return [tool if isinstance(tool, dict) else _convert_tool(tool) for tool in tools]
+
+
+def _convert_messages(
+    messages: list[Message],
+) -> tuple[str | None, list[dict[str, Any]]]:
+    system_text: str | None = None
+    converted: list[dict[str, Any]] = []
+
+    for message in messages:
+        if isinstance(message, SystemMessage):
+            system_text = message.text
+            continue
+
+        if isinstance(message, ToolResultMessage):
+            converted.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": message.tool_call_id,
+                            "content": message.content,
+                        }
+                    ],
+                }
+            )
+            continue
+
+        if isinstance(message, AssistantMessage) and message.tool_calls:
+            content: list[dict[str, Any]] = []
+            if message.text:
+                content.append({"type": "text", "text": message.text})
+            for tool_call in message.tool_calls:
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": tool_call.id,
+                        "name": tool_call.function.name,
+                        "input": json.loads(tool_call.function.arguments),
+                    }
+                )
+            converted.append({"role": "assistant", "content": content})
+            continue
+
+        if isinstance(message, UserMessage) and isinstance(message.content, list):
+            content_parts: list[dict[str, Any]] = []
+            for part in message.content:
+                if isinstance(part, ContentPartTextParam):
+                    content_parts.append({"type": "text", "text": part.text})
+                elif isinstance(part, ContentPartImageParam):
+                    url = part.image_url.url
+                    if url.startswith("data:"):
+                        media_type, _, data = url.partition(";base64,")
+                        content_parts.append(
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type.removeprefix("data:"),
+                                    "data": data,
+                                },
+                            }
+                        )
+                    else:
+                        content_parts.append(
+                            {
+                                "type": "image",
+                                "source": {"type": "url", "url": url},
+                            }
+                        )
+            converted.append({"role": "user", "content": content_parts})
+            continue
+
+        if isinstance(message, UserMessage):
+            converted.append({"role": "user", "content": message.text})
+        elif isinstance(message, AssistantMessage):
+            converted.append({"role": "assistant", "content": message.text})
+
+    return system_text, converted
 
 
 class ChatAnthropic(ChatModel):
@@ -174,7 +334,7 @@ class ChatAnthropic(ChatModel):
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
         try:
-            params = self._build_params(messages, kwargs)
+            params = _build_params(self._model, messages, self._merge_params(kwargs))
 
             if output_format is not None:
                 return await self._invoke_with_structured_output(params, output_format)
@@ -189,46 +349,12 @@ class ChatAnthropic(ChatModel):
                 raise mapped from exc
             raise
 
-    def _build_params(
-        self, messages: list[Message], method_kwargs: dict[str, Any]
-    ) -> dict[str, Any]:
-        merged = self._merge_params(method_kwargs)
-        system_text, converted = self._convert_messages(messages)
-
-        params: dict[str, Any] = {
-            "model": self._model,
-            "messages": converted,
-            "max_tokens": merged.pop("max_tokens", 4096) or 4096,
-        }
-
-        if system_text:
-            params["system"] = system_text
-
-        if "temperature" in merged:
-            params["temperature"] = merged.pop("temperature")
-        if "top_p" in merged:
-            params["top_p"] = merged.pop("top_p")
-        if "stop" in merged:
-            stop = merged.pop("stop")
-            if isinstance(stop, str):
-                stop = [stop]
-            params["stop_sequences"] = stop
-
-        # Remove OpenAI-specific params that Anthropic doesn't support
-        merged.pop("frequency_penalty", None)
-        merged.pop("presence_penalty", None)
-        merged.pop("seed", None)
-        merged.pop("response_format", None)
-
-        params.update(merged)
-        return params
-
     async def _invoke_plain(self, params: dict[str, Any]) -> ChatInvokeCompletion[str]:
         response: AnthropicMessage = await self._client.messages.create(**params)
         return ChatInvokeCompletion(
-            completion=self._extract_text(response),
+            completion=_extract_text(response),
             stop_reason=response.stop_reason,
-            usage=self._parse_usage(response.usage),
+            usage=_parse_usage(response.usage),
         )
 
     async def _invoke_with_tools(
@@ -237,9 +363,7 @@ class ChatAnthropic(ChatModel):
         tools: list[Tool | dict],
         tool_choice: Literal["auto", "required", "none"] = "auto",
     ) -> ChatInvokeCompletion[str]:
-        anthropic_tools = [
-            t if isinstance(t, dict) else self._convert_tool(t) for t in tools
-        ]
+        anthropic_tools = _convert_tools(tools)
         tool_choice_map = {
             "auto": {"type": "auto"},
             "required": {"type": "any"},
@@ -251,10 +375,10 @@ class ChatAnthropic(ChatModel):
             tool_choice=tool_choice_map.get(tool_choice, {"type": "auto"}),
         )
         return ChatInvokeCompletion(
-            completion=self._extract_text(response),
-            tool_calls=self._parse_tool_calls(response),
+            completion=_extract_text(response),
+            tool_calls=_parse_tool_calls(response),
             stop_reason=response.stop_reason,
-            usage=self._parse_usage(response.usage),
+            usage=_parse_usage(response.usage),
         )
 
     async def _invoke_with_structured_output[T: BaseModel](
@@ -277,131 +401,10 @@ class ChatAnthropic(ChatModel):
                 return ChatInvokeCompletion(
                     completion=parsed,
                     stop_reason=response.stop_reason,
-                    usage=self._parse_usage(response.usage),
+                    usage=_parse_usage(response.usage),
                 )
 
         raise ValueError("No structured output returned from Anthropic API")
-
-    def _extract_text(self, response: AnthropicMessage) -> str:
-        parts = []
-        for block in response.content:
-            if block.type == "text":
-                parts.append(block.text)
-        return "".join(parts)
-
-    def _parse_usage(self, usage: AnthropicUsage) -> ChatInvokeUsage:
-        return ChatInvokeUsage(
-            prompt_tokens=usage.input_tokens,
-            completion_tokens=usage.output_tokens,
-            total_tokens=usage.input_tokens + usage.output_tokens,
-            prompt_cached_tokens=getattr(usage, "cache_read_input_tokens", None),
-            prompt_cache_creation_tokens=getattr(
-                usage, "cache_creation_input_tokens", None
-            ),
-        )
-
-    def _parse_tool_calls(self, response: AnthropicMessage) -> list[ToolCall]:
-        tool_calls = []
-        for block in response.content:
-            if block.type == "tool_use":
-                tool_calls.append(
-                    ToolCall(
-                        id=block.id,
-                        function=Function(
-                            name=block.name,
-                            arguments=json.dumps(block.input),
-                        ),
-                    )
-                )
-        return tool_calls
-
-    def _convert_tool(self, tool: Tool) -> dict:
-        openai_schema = tool.to_openai_schema()
-        func = openai_schema.get("function", openai_schema)
-        return {
-            "name": func["name"],
-            "description": func.get("description", ""),
-            "input_schema": func.get("parameters", {}),
-        }
-
-    def _convert_messages(
-        self, messages: list[Message]
-    ) -> tuple[str | None, list[dict]]:
-        system_text: str | None = None
-        converted: list[dict] = []
-
-        for msg in messages:
-            if isinstance(msg, SystemMessage):
-                system_text = msg.text
-                continue
-
-            if isinstance(msg, ToolResultMessage):
-                converted.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": msg.tool_call_id,
-                                "content": msg.content,
-                            }
-                        ],
-                    }
-                )
-                continue
-
-            if isinstance(msg, AssistantMessage) and msg.tool_calls:
-                content: list[dict] = []
-                if msg.text:
-                    content.append({"type": "text", "text": msg.text})
-                for tc in msg.tool_calls:
-                    content.append(
-                        {
-                            "type": "tool_use",
-                            "id": tc.id,
-                            "name": tc.function.name,
-                            "input": json.loads(tc.function.arguments),
-                        }
-                    )
-                converted.append({"role": "assistant", "content": content})
-                continue
-
-            if isinstance(msg, UserMessage) and isinstance(msg.content, list):
-                content_parts: list[dict] = []
-                for part in msg.content:
-                    if isinstance(part, ContentPartTextParam):
-                        content_parts.append({"type": "text", "text": part.text})
-                    elif isinstance(part, ContentPartImageParam):
-                        url = part.image_url.url
-                        if url.startswith("data:"):
-                            media_type, _, b64 = url.partition(";base64,")
-                            media_type = media_type.replace("data:", "")
-                            content_parts.append(
-                                {
-                                    "type": "image",
-                                    "source": {
-                                        "type": "base64",
-                                        "media_type": media_type,
-                                        "data": b64,
-                                    },
-                                }
-                            )
-                        else:
-                            content_parts.append(
-                                {
-                                    "type": "image",
-                                    "source": {"type": "url", "url": url},
-                                }
-                            )
-                converted.append({"role": "user", "content": content_parts})
-                continue
-
-            if isinstance(msg, UserMessage):
-                converted.append({"role": "user", "content": msg.text})
-            elif isinstance(msg, AssistantMessage):
-                converted.append({"role": "assistant", "content": msg.text})
-
-        return system_text, converted
 
     async def stream(
         self,
@@ -410,11 +413,9 @@ class ChatAnthropic(ChatModel):
         tool_choice: Literal["auto", "required", "none"] = "auto",
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
-        params = self._build_params(messages, kwargs)
+        params = _build_params(self._model, messages, self._merge_params(kwargs))
 
-        anthropic_tools = [
-            t if isinstance(t, dict) else self._convert_tool(t) for t in tools or []
-        ]
+        anthropic_tools = _convert_tools(tools or [])
         if anthropic_tools:
             params["tools"] = anthropic_tools
             params["tool_choice"] = {
@@ -436,18 +437,11 @@ class ChatAnthropic(ChatModel):
             async with self._client.messages.stream(**params) as stream:
                 async for event in stream:
                     if event.type == "message_start":
-                        usage = getattr(event.message, "usage", None)
-                        if usage is not None:
-                            saw_usage = True
-                            input_tokens = getattr(usage, "input_tokens", input_tokens)
-                            cache_read_tokens = getattr(
-                                usage, "cache_read_input_tokens", cache_read_tokens
-                            )
-                            cache_creation_tokens = getattr(
-                                usage,
-                                "cache_creation_input_tokens",
-                                cache_creation_tokens,
-                            )
+                        usage = event.message.usage
+                        saw_usage = True
+                        input_tokens = usage.input_tokens
+                        cache_read_tokens = usage.cache_read_input_tokens
+                        cache_creation_tokens = usage.cache_creation_input_tokens
 
                     elif event.type == "content_block_start":
                         content_block = event.content_block
@@ -488,12 +482,8 @@ class ChatAnthropic(ChatModel):
 
                     elif event.type == "message_delta":
                         stop_reason = event.delta.stop_reason or stop_reason
-                        usage = getattr(event, "usage", None)
-                        if usage is not None:
-                            saw_usage = True
-                            output_tokens = getattr(
-                                usage, "output_tokens", output_tokens
-                            )
+                        saw_usage = True
+                        output_tokens = event.usage.output_tokens
         except Exception as exc:
             mapped = _map_anthropic_error(exc)
             if mapped is not exc:

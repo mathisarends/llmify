@@ -19,7 +19,7 @@ try:
     )
 except ImportError:
     raise ImportError(
-        "The 'openai' package is required for OpenAIResponses. "
+        "The 'openai' package is required for Responses API providers. "
         "Install it with: pip install py-llmify[openai]"
     )
 
@@ -58,7 +58,7 @@ _CHAT_ONLY_PARAMS = frozenset(
 )
 
 
-class OpenAIResponses(ChatModel):
+class OpenAIResponsesAPICompatible(ChatModel):
     def __init__(
         self,
         model: str,

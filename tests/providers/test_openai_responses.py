@@ -26,7 +26,7 @@ from llmify.messages import (
     UserMessage,
 )
 from llmify.providers.openai_responses import (
-    OpenAIResponses,
+    OpenAIResponsesAPICompatible,
     _convert_messages,
     _convert_tools,
 )
@@ -143,11 +143,11 @@ class TestMessageConversion:
 class TestConfiguration:
     def test_rejects_stream_as_constructor_parameter(self) -> None:
         with pytest.raises(TypeError, match="'stream' is managed"):
-            OpenAIResponses(model="gpt-test", stream=False)
+            OpenAIResponsesAPICompatible(model="gpt-test", stream=False)
 
     @pytest.mark.asyncio
     async def test_rejects_stream_as_method_parameter(self) -> None:
-        model = OpenAIResponses(model="gpt-test")
+        model = OpenAIResponsesAPICompatible(model="gpt-test")
 
         with pytest.raises(TypeError, match="'stream' is managed"):
             await model.invoke([UserMessage(content="Hi")], stream=False)
@@ -168,7 +168,7 @@ class TestInvoke:
             _text_delta(" world", 1),
             _completed(response, 2),
         )
-        model = OpenAIResponses(
+        model = OpenAIResponsesAPICompatible(
             model="gpt-test",
             max_tokens=20,
             frequency_penalty=0.5,
@@ -208,7 +208,7 @@ class TestInvoke:
             output_done,
             _completed(response, 1),
         )
-        model = OpenAIResponses(model="gpt-test")
+        model = OpenAIResponsesAPICompatible(model="gpt-test")
         model._client.responses.create = AsyncMock(return_value=events)
 
         emitted = []
@@ -228,7 +228,7 @@ class TestInvoke:
             _text_delta("Hi", 0),
             _completed(response, 1),
         )
-        model = OpenAIResponses(model="gpt-test")
+        model = OpenAIResponsesAPICompatible(model="gpt-test")
         model._client.responses.create = AsyncMock(return_value=events)
 
         emitted = []
