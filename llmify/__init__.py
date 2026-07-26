@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from .providers.cerebras import ChatCerebras, CerebrasModel
     from .providers.codex import ChatCodex
     from .providers.openai_compatible import OpenAICompatible
+    from .providers.openai_responses import ChatOpenAIResponses
     from .providers.anthropic import ChatAnthropic, AnthropicModel
     from .providers.google import ChatGoogle, GoogleModel
 
@@ -77,6 +78,11 @@ def __getattr__(name: str):
         from .providers.codex import ChatCodex
 
         return ChatCodex
+
+    if name == "ChatOpenAIResponses":
+        from .providers.openai_responses import ChatOpenAIResponses
+
+        return ChatOpenAIResponses
 
     if name == "OpenAICompatible":
         from .providers.openai_compatible import OpenAICompatible
@@ -123,6 +129,7 @@ __all__ = [
     "ChatCerebras",
     "CerebrasModel",
     "ChatCodex",
+    "ChatOpenAIResponses",
     "ChatAnthropic",
     "AnthropicModel",
     "ChatGoogle",

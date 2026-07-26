@@ -58,7 +58,7 @@ _CHAT_ONLY_PARAMS = frozenset(
 )
 
 
-class OpenAIResponsesAPICompatible(ChatModel):
+class ChatOpenAIResponses(ChatModel):
     def __init__(
         self,
         model: str,

@@ -1,34 +1,35 @@
 import json
-from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("google.genai")
 
-from llmify.base import ChatModel
-from llmify.providers.google import ChatGoogle
+from google.genai import types
 
-
-class MockGoogleModel(ChatGoogle):
-    def __init__(self):
-        ChatModel.__init__(self, model="gemini-test")
-        self._client = SimpleNamespace(models=SimpleNamespace())
+from llmify.providers.google import _parse_tool_calls, _parse_usage, _stop_reason
 
 
 class TestGoogleResponseParsing:
     def test_parses_direct_function_calls(self) -> None:
-        model = MockGoogleModel()
-        response = SimpleNamespace(
-            function_calls=[
-                SimpleNamespace(
-                    id="call_123",
-                    name="get_weather",
-                    args={"city": "Berlin", "unit": "celsius"},
+        response = types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(
+                        parts=[
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    id="call_123",
+                                    name="get_weather",
+                                    args={"city": "Berlin", "unit": "celsius"},
+                                )
+                            )
+                        ]
+                    )
                 )
             ]
         )
 
-        tool_calls = model._parse_tool_calls(response)
+        tool_calls = _parse_tool_calls(response)
 
         assert len(tool_calls) == 1
         assert tool_calls[0].id == "call_123"
@@ -38,20 +39,25 @@ class TestGoogleResponseParsing:
             "unit": "celsius",
         }
 
-    def test_parses_nested_function_call_parts_with_stable_fallback_id(self) -> None:
-        model = MockGoogleModel()
-        response = SimpleNamespace(
-            function_calls=[
-                SimpleNamespace(
-                    function_call=SimpleNamespace(
-                        name="search_web",
-                        args={"query": "gemini function calling"},
+    def test_creates_stable_fallback_id(self) -> None:
+        response = types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(
+                        parts=[
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    name="search_web",
+                                    args={"query": "gemini function calling"},
+                                )
+                            )
+                        ]
                     )
                 )
             ]
         )
 
-        tool_calls = model._parse_tool_calls(response)
+        tool_calls = _parse_tool_calls(response)
 
         assert len(tool_calls) == 1
         assert tool_calls[0].id == "call_0_search_web"
@@ -61,19 +67,18 @@ class TestGoogleResponseParsing:
         }
 
     def test_parses_usage_with_image_tokens(self) -> None:
-        model = MockGoogleModel()
-        usage = SimpleNamespace(
+        usage = types.GenerateContentResponseUsageMetadata(
             prompt_token_count=11,
             cached_content_token_count=3,
             candidates_token_count=7,
             total_token_count=18,
             prompt_tokens_details=[
-                SimpleNamespace(modality="TEXT", token_count=5),
-                SimpleNamespace(modality="IMAGE", token_count=6),
+                types.ModalityTokenCount(modality="TEXT", token_count=5),
+                types.ModalityTokenCount(modality="IMAGE", token_count=6),
             ],
         )
 
-        parsed = model._parse_usage(usage)
+        parsed = _parse_usage(usage)
 
         assert parsed is not None
         assert parsed.prompt_tokens == 11
@@ -83,21 +88,21 @@ class TestGoogleResponseParsing:
         assert parsed.total_tokens == 18
 
     def test_parses_usage_total_when_missing(self) -> None:
-        model = MockGoogleModel()
-        usage = SimpleNamespace(
+        usage = types.GenerateContentResponseUsageMetadata(
             prompt_token_count=4,
             candidates_token_count=9,
             total_token_count=None,
             prompt_tokens_details=[],
         )
 
-        parsed = model._parse_usage(usage)
+        parsed = _parse_usage(usage)
 
         assert parsed is not None
         assert parsed.total_tokens == 13
 
     def test_parses_stop_reason(self) -> None:
-        model = MockGoogleModel()
-        response = SimpleNamespace(candidates=[SimpleNamespace(finish_reason="STOP")])
+        response = types.GenerateContentResponse(
+            candidates=[types.Candidate(finish_reason="STOP")]
+        )
 
-        assert model._stop_reason(response) == "STOP"
+        assert _stop_reason(response) == "STOP"

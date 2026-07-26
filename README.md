@@ -405,6 +405,22 @@ llm = ChatOpenAI(
 `api_key` also accepts an async callable (`() -> str`), which is awaited before every
 request — useful for short-lived tokens that need refreshing.
 
+### OpenAI Responses API
+
+```python
+from llmify import ChatOpenAIResponses
+
+llm = ChatOpenAIResponses(
+    model="gpt-5.4-mini",
+    api_key="sk-...",  # optional if OPENAI_API_KEY is set
+    base_url="https://...",  # optional, defaults to the OpenAI API
+)
+```
+
+Use `ChatOpenAIResponses` when an endpoint exposes OpenAI's Responses API rather
+than the Chat Completions API. It supports the same llmify `invoke` and `stream`
+interface.
+
 ### Codex
 
 ```python
@@ -417,9 +433,10 @@ llm = ChatCodex(
 )
 ```
 
-`ChatCodex` uses the Codex Responses endpoint and configures the required
-`ChatGPT-Account-Id` header from `chatgpt_account_id`. The endpoint URL is fixed by
-the provider and does not need to be supplied by callers.
+`ChatCodex` specializes `ChatOpenAIResponses` for the Codex endpoint and
+configures the required `ChatGPT-Account-Id` header from `chatgpt_account_id`.
+The endpoint URL is fixed by the provider and does not need to be supplied by
+callers.
 
 ### Azure OpenAI
 

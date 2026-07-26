@@ -4,12 +4,12 @@ from typing import Any
 import httpx
 
 from llmify.providers._openai_utils import resolve_api_key
-from llmify.providers.openai_responses import OpenAIResponsesAPICompatible
+from llmify.providers.openai_responses import ChatOpenAIResponses
 
 _CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
 
-class ChatCodex(OpenAIResponsesAPICompatible):
+class ChatCodex(ChatOpenAIResponses):
     def __init__(
         self,
         model: str,

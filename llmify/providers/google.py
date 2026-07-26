@@ -2,7 +2,7 @@ import json
 import os
 from collections.abc import AsyncIterator
 from enum import StrEnum
-from typing import Any, Literal, overload
+from typing import Any, Literal, cast, overload
 
 import httpx
 from pydantic import BaseModel
@@ -92,7 +92,7 @@ def _build_config(
     tools: list[Tool | dict[str, Any]] | None = None,
     tool_choice: Literal["auto", "required", "none"] = "auto",
     output_format: type[BaseModel] | None = None,
-) -> dict[str, Any]:
+) -> google_types.GenerateContentConfig | None:
     config: dict[str, Any] = {}
 
     if "max_tokens" in merged:
@@ -130,7 +130,9 @@ def _build_config(
         config["tool_config"] = {"function_calling_config": {"mode": mode}}
 
     config.update(merged)
-    return config
+    if not config:
+        return None
+    return google_types.GenerateContentConfig(**config)
 
 
 def _convert_messages(
@@ -223,6 +225,9 @@ def _convert_user_parts(message: UserMessage) -> list[dict[str, Any]]:
 def _convert_tool(tool: Tool | dict[str, Any]) -> dict[str, Any]:
     openai_schema = tool if isinstance(tool, dict) else tool.to_openai_schema()
     function = openai_schema.get("function", openai_schema)
+    if not isinstance(function, dict):
+        raise TypeError("Tool schema must contain a function object")
+    function = cast(dict[str, Any], function)
     if "parameters_json_schema" in function:
         return function
     return {
@@ -263,7 +268,7 @@ def _parse_usage(
         return None
 
     prompt_tokens = usage.prompt_token_count or 0
-    completion_tokens = usage.response_token_count or 0
+    completion_tokens = usage.candidates_token_count or 0
     total_tokens = usage.total_token_count
     if total_tokens is None:
         total_tokens = prompt_tokens + completion_tokens

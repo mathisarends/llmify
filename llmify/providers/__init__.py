@@ -31,6 +31,11 @@ def __getattr__(name: str):
 
         return ChatCodex
 
+    if name == "ChatOpenAIResponses":
+        from .openai_responses import ChatOpenAIResponses
+
+        return ChatOpenAIResponses
+
     if name == "OpenAICompatible":
         from .openai_compatible import OpenAICompatible
 
@@ -54,6 +59,7 @@ __all__ = [
     "ChatAzureOpenAI",
     "ChatCerebras",
     "ChatCodex",
+    "ChatOpenAIResponses",
     "ChatAnthropic",
     "ChatGoogle",
     "ChatModel",

@@ -2,7 +2,7 @@ import json
 import os
 from collections.abc import AsyncIterator
 from enum import StrEnum
-from typing import Any, Literal, overload
+from typing import Any, Literal, cast, overload
 
 import httpx
 from pydantic import BaseModel
@@ -24,7 +24,11 @@ try:
         RateLimitError as _AnthropicRateLimitError,
     )
     from anthropic.types import Message as AnthropicMessage
+    from anthropic.types import ToolChoiceParam, ToolUnionParam
     from anthropic.types import Usage as AnthropicUsage
+    from anthropic.types.message_create_params import (
+        MessageCreateParamsNonStreaming,
+    )
 except ImportError:
     raise ImportError(
         "The 'anthropic' package is required for ChatAnthropic. "
@@ -64,10 +68,7 @@ from llmify.views import (
 
 def _map_anthropic_error(exc: Exception) -> Exception:
     if isinstance(exc, _AnthropicRateLimitError):
-        body = exc.body or {}
-        error_type = (
-            (body.get("error") or {}).get("type", "") if isinstance(body, dict) else ""
-        )
+        error_type = _error_details(exc.body).get("type", "")
         if error_type == "credit_balance_too_low":
             return OutOfCreditsError(str(exc))
         retry_after: float | None = None
@@ -81,12 +82,7 @@ def _map_anthropic_error(exc: Exception) -> Exception:
     if isinstance(exc, _AnthropicStatusError) and exc.status_code == 402:
         return OutOfCreditsError(str(exc))
     if isinstance(exc, _AnthropicStatusError) and exc.status_code == 400:
-        body = exc.body or {}
-        message = (
-            (body.get("error") or {}).get("message", "")
-            if isinstance(body, dict)
-            else ""
-        )
+        message = _error_details(exc.body).get("message", "")
         msg_lower = message.lower()
         if (
             "too long" in msg_lower
@@ -104,6 +100,13 @@ def _map_anthropic_error(exc: Exception) -> Exception:
     if isinstance(exc, _AnthropicStatusError) and exc.status_code >= 500:
         return RetryableError(str(exc), status_code=exc.status_code)
     return exc
+
+
+def _error_details(body: object | None) -> dict[str, Any]:
+    if not isinstance(body, dict):
+        return {}
+    details = body.get("error")
+    return cast(dict[str, Any], details) if isinstance(details, dict) else {}
 
 
 class AnthropicModel(StrEnum):
@@ -187,8 +190,11 @@ def _convert_tool(tool: Tool) -> dict[str, Any]:
     }
 
 
-def _convert_tools(tools: list[Tool | dict]) -> list[dict]:
-    return [tool if isinstance(tool, dict) else _convert_tool(tool) for tool in tools]
+def _convert_tools(tools: list[Tool | dict]) -> list[ToolUnionParam]:
+    return [
+        cast(ToolUnionParam, tool if isinstance(tool, dict) else _convert_tool(tool))
+        for tool in tools
+    ]
 
 
 def _convert_messages(
@@ -364,16 +370,20 @@ class ChatAnthropic(ChatModel):
         tool_choice: Literal["auto", "required", "none"] = "auto",
     ) -> ChatInvokeCompletion[str]:
         anthropic_tools = _convert_tools(tools)
-        tool_choice_map = {
+        tool_choice_map: dict[Literal["auto", "required", "none"], ToolChoiceParam] = {
             "auto": {"type": "auto"},
             "required": {"type": "any"},
             "none": {"type": "none"},
         }
-        response: AnthropicMessage = await self._client.messages.create(
-            **params,
-            tools=anthropic_tools,
-            tool_choice=tool_choice_map.get(tool_choice, {"type": "auto"}),
+        request = cast(
+            MessageCreateParamsNonStreaming,
+            {
+                **params,
+                "tools": anthropic_tools,
+                "tool_choice": tool_choice_map[tool_choice],
+            },
         )
+        response: AnthropicMessage = await self._client.messages.create(**request)
         return ChatInvokeCompletion(
             completion=_extract_text(response),
             tool_calls=_parse_tool_calls(response),
@@ -390,11 +400,18 @@ class ChatAnthropic(ChatModel):
             "description": f"Return structured data as {output_format.__name__}",
             "input_schema": schema,
         }
-        response: AnthropicMessage = await self._client.messages.create(
-            **params,
-            tools=[tool_def],
-            tool_choice={"type": "tool", "name": "structured_output"},
+        request = cast(
+            MessageCreateParamsNonStreaming,
+            {
+                **params,
+                "tools": [tool_def],
+                "tool_choice": {
+                    "type": "tool",
+                    "name": "structured_output",
+                },
+            },
         )
+        response: AnthropicMessage = await self._client.messages.create(**request)
         for block in response.content:
             if block.type == "tool_use" and block.name == "structured_output":
                 parsed = output_format.model_validate(block.input)
