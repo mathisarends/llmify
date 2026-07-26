@@ -1,8 +1,8 @@
-import os
-import httpx
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import Any
+
+import httpx
 
 try:
     from openai import AsyncOpenAI
@@ -12,6 +12,7 @@ except ImportError:
         "Install it with: pip install py-llmify[openai]"
     )
 
+from llmify.providers._openai_utils import resolve_api_key
 from llmify.providers.openai_compatible import OpenAICompatible
 
 
@@ -64,8 +65,7 @@ class ChatOpenAI(OpenAICompatible):
             max_retries=max_retries,
             **kwargs,
         )
-        if api_key is None:
-            api_key = os.getenv("OPENAI_API_KEY")
+        api_key = resolve_api_key(api_key, "OPENAI_API_KEY", "OpenAI")
 
         self._client = AsyncOpenAI(
             api_key=api_key,

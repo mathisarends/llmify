@@ -2,7 +2,7 @@ import json
 import os
 from collections.abc import AsyncIterator
 from enum import StrEnum
-from typing import Any, Literal, overload
+from typing import Any, Literal, Self, overload
 
 import httpx
 from pydantic import BaseModel, Field
@@ -443,7 +443,7 @@ class _GoogleUsage(BaseModel):
     total_tokens: int
 
     @classmethod
-    def from_raw(cls, usage: object) -> "_GoogleUsage":
+    def from_raw(cls, usage: object) -> Self:
         prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
         completion_tokens = getattr(usage, "candidates_token_count", 0) or 0
         total_tokens = getattr(usage, "total_token_count", None)

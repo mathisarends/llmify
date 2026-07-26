@@ -1,11 +1,13 @@
 import asyncio
-from llmify import ChatOpenAI, SystemMessage, UserMessage
+
 from dotenv import load_dotenv
+
+from llmify import ChatOpenAI, SystemMessage, UserMessage
 
 load_dotenv(override=True)
 
 
-async def main():
+async def main() -> None:
     llm = ChatOpenAI(model="gpt-4o")
 
     response = await llm.invoke(

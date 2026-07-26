@@ -1,5 +1,3 @@
-import json
-import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Literal, overload
 
@@ -8,6 +6,17 @@ from pydantic import BaseModel
 
 try:
     from openai import AsyncOpenAI
+    from openai.types.responses import (
+        Response,
+        ResponseCompletedEvent,
+        ResponseErrorEvent,
+        ResponseFailedEvent,
+        ResponseFunctionToolCall,
+        ResponseIncompleteEvent,
+        ResponseOutputItem,
+        ResponseOutputItemDoneEvent,
+        ResponseTextDeltaEvent,
+    )
 except ImportError:
     raise ImportError(
         "The 'openai' package is required for OpenAIResponses. "
@@ -15,19 +24,25 @@ except ImportError:
     )
 
 from llmify.base import ChatModel
-from llmify.exceptions import CredentialsUnavailableError, LLMifyError
+from llmify.exceptions import LLMifyError
 from llmify.messages import (
     AssistantMessage,
     ContentPartImageParam,
     ContentPartTextParam,
-    Function,
     Message,
     SystemMessage,
     ToolCall,
     ToolResultMessage,
     UserMessage,
 )
-from llmify.providers.openai_compatible import _map_openai_error
+from llmify.providers._openai_utils import (
+    openai_errors,
+    parse_usage,
+    reject_stream_parameter,
+    resolve_api_key,
+    tool_call,
+    tool_schemas,
+)
 from llmify.tools import Tool
 from llmify.views import (
     ChatInvokeCompletion,
@@ -44,14 +59,6 @@ _CHAT_ONLY_PARAMS = frozenset(
 
 
 class OpenAIResponses(ChatModel):
-    """ChatModel backed by the OpenAI Responses API (`POST /responses`).
-
-    Use this instead of `ChatOpenAI` for endpoints that only speak the Responses
-    API, such as the Codex backend. Requests are always sent with `stream=True`
-    because those backends reject unstreamed calls; `invoke` consumes the stream
-    and returns the aggregated result.
-    """
-
     def __init__(
         self,
         model: str,
@@ -66,6 +73,7 @@ class OpenAIResponses(ChatModel):
         default_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ):
+        reject_stream_parameter(kwargs)
         super().__init__(
             model=model,
             max_tokens=max_tokens,
@@ -75,12 +83,7 @@ class OpenAIResponses(ChatModel):
             max_retries=max_retries,
             **kwargs,
         )
-        if api_key is None:
-            api_key = os.getenv("OPENAI_API_KEY")
-        if api_key is None:
-            raise CredentialsUnavailableError(
-                "No OpenAI API key found. Pass 'api_key' or set OPENAI_API_KEY."
-            )
+        api_key = resolve_api_key(api_key, "OPENAI_API_KEY", "OpenAI")
 
         self._store = store
         self._client = AsyncOpenAI(
@@ -109,11 +112,12 @@ class OpenAIResponses(ChatModel):
         tool_choice: Literal["auto", "required", "none"] = "auto",
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
+        reject_stream_parameter(kwargs)
         end = await self._collect(
             messages,
             tools=tools,
             tool_choice=tool_choice,
-            params=self._responses_params(kwargs),
+            params=_responses_params(self._merge_params(kwargs)),
             text=_json_schema_format(output_format),
         )
 
@@ -146,11 +150,12 @@ class OpenAIResponses(ChatModel):
         tool_choice: Literal["auto", "required", "none"] = "auto",
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
+        reject_stream_parameter(kwargs)
         async for event in self._stream(
             messages,
             tools=tools,
             tool_choice=tool_choice,
-            params=self._responses_params(kwargs),
+            params=_responses_params(self._merge_params(kwargs)),
         ):
             yield event
 
@@ -178,61 +183,51 @@ class OpenAIResponses(ChatModel):
         params: dict[str, Any],
         text: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        instructions, input_items = self._convert_messages(messages)
+        instructions, input_items = _convert_messages(messages)
 
         request: dict[str, Any] = {
             "model": self._model,
             "input": input_items,
             "store": self._store,
-            "stream": True,
             **params,
+            "stream": True,
         }
         if instructions:
             request["instructions"] = instructions
         if text is not None:
             request["text"] = text
         if tools:
-            request["tools"] = self._convert_tools(tools)
+            request["tools"] = _convert_tools(tools)
             request["tool_choice"] = tool_choice
 
-        try:
+        with openai_errors():
             stream = await self._client.responses.create(**request)
-        except Exception as exc:
-            mapped = _map_openai_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise
 
         text_acc: list[str] = []
         tool_calls: list[ToolCall] = []
         usage: ChatInvokeUsage | None = None
         stop_reason: str | None = None
 
-        try:
+        with openai_errors():
             async for event in stream:
-                event_type = getattr(event, "type", None)
-
-                if event_type == "response.output_text.delta":
+                if isinstance(event, ResponseTextDeltaEvent):
                     text_acc.append(event.delta)
                     yield StreamTextDelta(delta=event.delta)
 
-                elif event_type == "response.output_item.done":
+                elif isinstance(event, ResponseOutputItemDoneEvent):
                     tool_call = _parse_function_call(event.item)
                     if tool_call is not None:
                         tool_calls.append(tool_call)
                         yield StreamToolCall(tool_call=tool_call)
 
-                elif event_type in ("response.completed", "response.incomplete"):
-                    usage = _parse_usage(getattr(event.response, "usage", None))
+                elif isinstance(
+                    event, (ResponseCompletedEvent, ResponseIncompleteEvent)
+                ):
+                    usage = parse_usage(event.response.usage)
                     stop_reason = _parse_stop_reason(event.response, tool_calls)
 
-                elif event_type in ("response.failed", "error"):
+                elif isinstance(event, (ResponseFailedEvent, ResponseErrorEvent)):
                     raise LLMifyError(_error_message(event))
-        except Exception as exc:
-            mapped = _map_openai_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise
 
         yield StreamEnd(
             stop_reason=stop_reason,
@@ -240,72 +235,6 @@ class OpenAIResponses(ChatModel):
             tool_calls=tool_calls,
             completion="".join(text_acc),
         )
-
-    def _responses_params(self, method_kwargs: dict[str, Any]) -> dict[str, Any]:
-        """Merge defaults and translate the chat-completions naming this library uses."""
-        params = self._merge_params(method_kwargs)
-        for key in _CHAT_ONLY_PARAMS:
-            params.pop(key, None)
-
-        max_tokens = params.pop("max_tokens", None)
-        if max_tokens is not None:
-            params["max_output_tokens"] = max_tokens
-
-        return params
-
-    def _convert_messages(
-        self, messages: list[Message]
-    ) -> tuple[str | None, list[dict]]:
-        """Split messages into `instructions` and Responses API input items."""
-        instructions: list[str] = []
-        items: list[dict] = []
-
-        for msg in messages:
-            if isinstance(msg, SystemMessage):
-                if msg.text:
-                    instructions.append(msg.text)
-            elif isinstance(msg, UserMessage):
-                items.append({"role": "user", "content": _user_content(msg)})
-            elif isinstance(msg, AssistantMessage):
-                if msg.text:
-                    items.append({"role": "assistant", "content": msg.text})
-                for tool_call in msg.tool_calls:
-                    items.append(
-                        {
-                            "type": "function_call",
-                            "call_id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
-                        }
-                    )
-            elif isinstance(msg, ToolResultMessage):
-                items.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": msg.tool_call_id,
-                        "output": msg.content,
-                    }
-                )
-
-        return "\n\n".join(instructions) or None, items
-
-    def _convert_tools(self, tools: list[Tool | dict]) -> list[dict]:
-        """Flatten chat-style tool schemas into the Responses API's flat shape."""
-        converted = []
-        for tool in tools:
-            schema = tool if isinstance(tool, dict) else tool.to_openai_schema()
-            function = schema.get("function", schema)
-            converted.append(
-                {
-                    "type": "function",
-                    "name": function["name"],
-                    "description": function.get("description") or None,
-                    "parameters": function.get("parameters")
-                    or {"type": "object", "properties": {}},
-                    "strict": False,
-                }
-            )
-        return converted
 
 
 def _user_content(msg: UserMessage) -> str | list[dict]:
@@ -325,6 +254,68 @@ def _user_content(msg: UserMessage) -> str | list[dict]:
                 }
             )
     return content
+
+
+def _convert_messages(messages: list[Message]) -> tuple[str | None, list[dict]]:
+    instructions: list[str] = []
+    items: list[dict] = []
+
+    for message in messages:
+        if isinstance(message, SystemMessage):
+            if message.text:
+                instructions.append(message.text)
+        elif isinstance(message, UserMessage):
+            items.append({"role": "user", "content": _user_content(message)})
+        elif isinstance(message, AssistantMessage):
+            if message.text:
+                items.append({"role": "assistant", "content": message.text})
+            for tool_call in message.tool_calls:
+                items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tool_call.id,
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    }
+                )
+        elif isinstance(message, ToolResultMessage):
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": message.tool_call_id,
+                    "output": message.content,
+                }
+            )
+
+    return "\n\n".join(instructions) or None, items
+
+
+def _convert_tools(tools: list[Tool | dict]) -> list[dict]:
+    converted = []
+    for schema in tool_schemas(tools):
+        function = schema.get("function", schema)
+        converted.append(
+            {
+                "type": "function",
+                "name": function["name"],
+                "description": function.get("description") or None,
+                "parameters": function.get("parameters")
+                or {"type": "object", "properties": {}},
+                "strict": False,
+            }
+        )
+    return converted
+
+
+def _responses_params(params: dict[str, Any]) -> dict[str, Any]:
+    for key in _CHAT_ONLY_PARAMS:
+        params.pop(key, None)
+
+    max_tokens = params.pop("max_tokens", None)
+    if max_tokens is not None:
+        params["max_output_tokens"] = max_tokens
+
+    return params
 
 
 def _json_schema_format(output_format: type[BaseModel] | None) -> dict[str, Any] | None:
@@ -358,45 +349,27 @@ def _to_strict_schema(schema: Any) -> Any:
     return strict
 
 
-def _parse_function_call(item: Any) -> ToolCall | None:
-    if getattr(item, "type", None) != "function_call":
+def _parse_function_call(item: ResponseOutputItem) -> ToolCall | None:
+    if not isinstance(item, ResponseFunctionToolCall):
         return None
-    return ToolCall(
-        id=getattr(item, "call_id", None) or getattr(item, "id", ""),
-        function=Function(
-            name=item.name,
-            arguments=item.arguments or "{}",
-        ),
+    return tool_call(
+        call_id=item.call_id,
+        name=item.name,
+        arguments=item.arguments,
     )
 
 
-def _parse_usage(usage: Any) -> ChatInvokeUsage | None:
-    if not usage:
-        return None
-    return ChatInvokeUsage(
-        prompt_tokens=usage.input_tokens,
-        prompt_cached_tokens=getattr(
-            getattr(usage, "input_tokens_details", None), "cached_tokens", None
-        ),
-        completion_tokens=usage.output_tokens,
-        total_tokens=usage.total_tokens,
-    )
-
-
-def _parse_stop_reason(response: Any, tool_calls: list[ToolCall]) -> str:
-    incomplete_details = getattr(response, "incomplete_details", None)
-    if incomplete_details is not None:
-        return getattr(incomplete_details, "reason", None) or "incomplete"
+def _parse_stop_reason(response: Response, tool_calls: list[ToolCall]) -> str:
+    if response.incomplete_details is not None:
+        return response.incomplete_details.reason or "incomplete"
     if tool_calls:
         return "tool_calls"
-    return getattr(response, "status", None) or "completed"
+    return response.status or "completed"
 
 
-def _error_message(event: Any) -> str:
-    error = getattr(event, "error", None) or getattr(
-        getattr(event, "response", None), "error", None
-    )
-    if error is None:
+def _error_message(event: ResponseFailedEvent | ResponseErrorEvent) -> str:
+    if isinstance(event, ResponseErrorEvent):
+        return event.message
+    if event.response.error is None:
         return "The Responses API reported an unspecified error."
-    message = getattr(error, "message", None)
-    return message or json.dumps(error, default=str)
+    return event.response.error.message

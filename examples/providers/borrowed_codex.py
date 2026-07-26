@@ -31,7 +31,9 @@ async def main() -> None:
     response = await llm.invoke(
         [
             SystemMessage(content="You are a helpful assistant."),
-            UserMessage(content="What is 2+2?"),
+            UserMessage(
+                content="Was würdest du sagen ist das Geheimnis für die plätzliche Verbesserung von Coding Agents"
+            ),
         ]
     )
     print(response.completion)

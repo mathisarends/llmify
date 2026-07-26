@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Any, Literal, overload
-
 from collections.abc import AsyncIterator
+from typing import Any, Literal, overload
 
 import httpx
 from pydantic import BaseModel
@@ -88,7 +87,7 @@ class ChatModel(ABC):
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]: ...
 
     @abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[Message],
         tools: list[Tool | dict] | None = None,

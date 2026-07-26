@@ -1,45 +1,43 @@
-from typing import Literal, Any, overload, TYPE_CHECKING
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from pydantic import BaseModel
 
 try:
-    from openai.types import CompletionUsage
-    from openai import (
-        AsyncOpenAI,
-        AsyncAzureOpenAI,
-        RateLimitError as _OpenAIRateLimitError,
-        APIConnectionError as _OpenAIConnectionError,
-        APITimeoutError as _OpenAITimeoutError,
-        APIStatusError as _OpenAIStatusError,
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
+    from openai.types.chat import (
+        ChatCompletion,
+        ChatCompletionChunk,
+        ChatCompletionMessageParam,
+        ChatCompletionToolUnionParam,
     )
-    from openai.types.chat import ChatCompletion, ChatCompletionChunk
-    from openai.types.chat.chat_completion_message_tool_call import (
-        ChatCompletionMessageToolCall,
+    from openai.types.chat.chat_completion_message import (
+        ChatCompletionMessageToolCallUnion,
+    )
+    from openai.types.chat.chat_completion_message_function_tool_call import (
+        ChatCompletionMessageFunctionToolCall,
     )
 except ImportError:
     if TYPE_CHECKING:
         raise
 
 from llmify.base import ChatModel
-from llmify.exceptions import (
-    ContextLengthExceededError,
-    CredentialsUnavailableError,
-    OutOfCreditsError,
-    RateLimitError,
-    RetryableError,
-)
-
 from llmify.messages import (
-    Message,
-    UserMessage,
-    SystemMessage,
     AssistantMessage,
-    ToolResultMessage,
-    ContentPartTextParam,
     ContentPartImageParam,
-    Function,
+    ContentPartTextParam,
+    Message,
+    SystemMessage,
     ToolCall,
+    ToolResultMessage,
+    UserMessage,
+)
+from llmify.providers._openai_utils import (
+    openai_errors,
+    parse_usage,
+    reject_stream_parameter,
+    tool_call,
+    tool_schemas,
 )
 from llmify.tools import Tool
 from llmify.views import (
@@ -52,43 +50,112 @@ from llmify.views import (
 )
 
 
-def _map_openai_error(exc: Exception) -> Exception:
-    if isinstance(exc, _OpenAIRateLimitError):
-        body = getattr(exc, "body", None) or {}
-        code = (
-            (body.get("error") or {}).get("code", "") if isinstance(body, dict) else ""
+def _convert_messages(messages: list[Message]) -> list[ChatCompletionMessageParam]:
+    return [_convert_message(message) for message in messages]
+
+
+def _convert_message(message: Message) -> ChatCompletionMessageParam:
+    if isinstance(message, ToolResultMessage):
+        return cast(
+            ChatCompletionMessageParam,
+            {
+                "role": "tool",
+                "tool_call_id": message.tool_call_id,
+                "content": message.content,
+            },
         )
-        if code == "insufficient_quota":
-            return OutOfCreditsError(str(exc))
-        retry_after: float | None = None
-        response = getattr(exc, "response", None)
-        if response is not None:
-            raw = response.headers.get("retry-after")
-            if raw:
-                try:
-                    retry_after = float(raw)
-                except ValueError:
-                    pass
-        return RateLimitError(str(exc), retry_after=retry_after)
-    if isinstance(exc, _OpenAIStatusError) and exc.status_code == 400:
-        body = getattr(exc, "body", None) or {}
-        code = (
-            (body.get("error") or {}).get("code", "") if isinstance(body, dict) else ""
+
+    if isinstance(message, AssistantMessage) and message.tool_calls:
+        return cast(
+            ChatCompletionMessageParam,
+            {
+                "role": "assistant",
+                "content": message.text or None,
+                "tool_calls": [
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        },
+                    }
+                    for tool_call in message.tool_calls
+                ],
+            },
         )
-        if code == "context_length_exceeded":
-            return ContextLengthExceededError(str(exc))
-    if isinstance(exc, _OpenAIStatusError) and exc.status_code == 401:
-        return CredentialsUnavailableError(str(exc))
-    if isinstance(exc, (_OpenAIConnectionError, _OpenAITimeoutError)):
-        return RetryableError(str(exc))
-    if isinstance(exc, _OpenAIStatusError) and exc.status_code >= 500:
-        return RetryableError(str(exc), status_code=exc.status_code)
-    return exc
+
+    if isinstance(message, UserMessage) and isinstance(message.content, list):
+        content = []
+        for part in message.content:
+            if isinstance(part, ContentPartTextParam):
+                content.append({"type": "text", "text": part.text})
+            elif isinstance(part, ContentPartImageParam):
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": part.image_url.url,
+                            "detail": part.image_url.detail,
+                        },
+                    }
+                )
+        return cast(
+            ChatCompletionMessageParam,
+            {"role": message.role, "content": content},
+        )
+
+    if isinstance(message, SystemMessage):
+        if isinstance(message.content, list):
+            return cast(
+                ChatCompletionMessageParam,
+                {
+                    "role": message.role,
+                    "content": [
+                        {"type": "text", "text": part.text} for part in message.content
+                    ],
+                },
+            )
+        return cast(
+            ChatCompletionMessageParam,
+            {"role": message.role, "content": message.content},
+        )
+
+    if isinstance(message, UserMessage):
+        return cast(
+            ChatCompletionMessageParam,
+            {"role": message.role, "content": message.content},
+        )
+
+    return cast(
+        ChatCompletionMessageParam,
+        {"role": message.role, "content": message.text},
+    )
+
+
+def _parse_tool_calls(
+    raw_tool_calls: list[ChatCompletionMessageToolCallUnion] | None,
+) -> list[ToolCall]:
+    if not raw_tool_calls:
+        return []
+    return [
+        tool_call(
+            call_id=raw_tool_call.id,
+            name=raw_tool_call.function.name,
+            arguments=raw_tool_call.function.arguments,
+        )
+        for raw_tool_call in raw_tool_calls
+        if isinstance(raw_tool_call, ChatCompletionMessageFunctionToolCall)
+    ]
 
 
 class OpenAICompatible(ChatModel):
     _client: AsyncOpenAI | AsyncAzureOpenAI
     _model: str
+
+    def __init__(self, *args: Any, **kwargs: Any):
+        reject_stream_parameter(kwargs)
+        super().__init__(*args, **kwargs)
 
     @overload
     async def invoke[T: BaseModel](
@@ -108,9 +175,10 @@ class OpenAICompatible(ChatModel):
         tool_choice: Literal["auto", "required", "none"] = "auto",
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
-        try:
+        reject_stream_parameter(kwargs)
+        with openai_errors():
             params = self._merge_params(kwargs)
-            converted_messages = self._convert_messages(messages)
+            converted_messages = _convert_messages(messages)
 
             if output_format is not None:
                 return await self._invoke_with_structured_output(
@@ -123,14 +191,12 @@ class OpenAICompatible(ChatModel):
                 )
 
             return await self._invoke_plain(converted_messages, params)
-        except Exception as exc:
-            mapped = _map_openai_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise
 
     async def _invoke_with_structured_output[T: BaseModel](
-        self, messages: list[dict], output_format: type[T], params: dict[str, Any]
+        self,
+        messages: list[ChatCompletionMessageParam],
+        output_format: type[T],
+        params: dict[str, Any],
     ) -> ChatInvokeCompletion[T]:
         response = await self._client.beta.chat.completions.parse(
             model=self._model,
@@ -143,20 +209,19 @@ class OpenAICompatible(ChatModel):
         return ChatInvokeCompletion(
             completion=choice.message.parsed,
             stop_reason=choice.finish_reason,
-            usage=self._parse_usage(usage),
+            usage=parse_usage(usage),
         )
 
     async def _invoke_with_tools(
         self,
-        messages: list[dict],
+        messages: list[ChatCompletionMessageParam],
         tools: list[Tool | dict],
         params: dict[str, Any],
         tool_choice: Literal["auto", "required", "none"] = "auto",
     ) -> ChatInvokeCompletion[str]:
-        openai_tools = [
-            t if isinstance(t, dict) else t.to_openai_schema() for t in tools
-        ]
-        response: ChatCompletion = await self._client.chat.completions.create(
+        openai_tools = cast(list[ChatCompletionToolUnionParam], tool_schemas(tools))
+        create = cast(Any, self._client.chat.completions.create)
+        response: ChatCompletion = await create(
             model=self._model,
             messages=messages,
             tools=openai_tools,
@@ -166,15 +231,18 @@ class OpenAICompatible(ChatModel):
         choice = response.choices[0]
         return ChatInvokeCompletion(
             completion=choice.message.content or "",
-            tool_calls=self._parse_tool_calls(choice.message.tool_calls),
+            tool_calls=_parse_tool_calls(choice.message.tool_calls),
             stop_reason=choice.finish_reason,
-            usage=self._parse_usage(response.usage),
+            usage=parse_usage(response.usage),
         )
 
     async def _invoke_plain(
-        self, messages: list[dict], params: dict[str, Any]
+        self,
+        messages: list[ChatCompletionMessageParam],
+        params: dict[str, Any],
     ) -> ChatInvokeCompletion[str]:
-        response: ChatCompletion = await self._client.chat.completions.create(
+        create = cast(Any, self._client.chat.completions.create)
+        response: ChatCompletion = await create(
             model=self._model,
             messages=messages,
             **params,
@@ -183,90 +251,8 @@ class OpenAICompatible(ChatModel):
         return ChatInvokeCompletion(
             completion=choice.message.content or "",
             stop_reason=choice.finish_reason,
-            usage=self._parse_usage(response.usage),
+            usage=parse_usage(response.usage),
         )
-
-    def _parse_usage(self, usage: CompletionUsage | None) -> ChatInvokeUsage | None:
-        if not usage:
-            return None
-        return ChatInvokeUsage(
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            prompt_cached_tokens=getattr(
-                getattr(usage, "prompt_tokens_details", None), "cached_tokens", None
-            ),
-        )
-
-    def _parse_tool_calls(
-        self, raw_tool_calls: list[ChatCompletionMessageToolCall] | None
-    ) -> list[ToolCall]:
-        if not raw_tool_calls:
-            return []
-        return [
-            ToolCall(
-                id=tc.id,
-                function=Function(
-                    name=tc.function.name, arguments=tc.function.arguments
-                ),
-            )
-            for tc in raw_tool_calls
-        ]
-
-    def _convert_messages(self, messages: list[Message]) -> list[dict]:
-        return [self._convert_single_message(msg) for msg in messages]
-
-    def _convert_single_message(self, msg: Message) -> dict:
-        if isinstance(msg, ToolResultMessage):
-            return {
-                "role": "tool",
-                "tool_call_id": msg.tool_call_id,
-                "content": msg.content,
-            }
-
-        if isinstance(msg, AssistantMessage) and msg.tool_calls:
-            return {
-                "role": "assistant",
-                "content": msg.text or None,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
-            }
-
-        if isinstance(msg, UserMessage) and isinstance(msg.content, list):
-            content = []
-            for part in msg.content:
-                if isinstance(part, ContentPartTextParam):
-                    content.append({"type": "text", "text": part.text})
-                elif isinstance(part, ContentPartImageParam):
-                    content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": part.image_url.url,
-                                "detail": part.image_url.detail,
-                            },
-                        }
-                    )
-            return {"role": msg.role, "content": content}
-
-        if isinstance(msg, (UserMessage, SystemMessage)):
-            if isinstance(msg.content, list):
-                return {
-                    "role": msg.role,
-                    "content": [{"type": "text", "text": p.text} for p in msg.content],
-                }
-            return {"role": msg.role, "content": msg.content}
-
-        return {"role": msg.role, "content": msg.text}
 
     async def stream(
         self,
@@ -275,10 +261,9 @@ class OpenAICompatible(ChatModel):
         tool_choice: Literal["auto", "required", "none"] = "auto",
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
+        reject_stream_parameter(kwargs)
         params = self._merge_params(kwargs)
-        openai_tools = [
-            t if isinstance(t, dict) else t.to_openai_schema() for t in tools or []
-        ]
+        openai_tools = tool_schemas(tools or [])
 
         raw_stream_options = params.pop("stream_options", None)
         stream_options: dict[str, Any] = (
@@ -288,33 +273,28 @@ class OpenAICompatible(ChatModel):
 
         request_args: dict[str, Any] = {
             "model": self._model,
-            "messages": self._convert_messages(messages),
+            "messages": _convert_messages(messages),
+            **params,
             "stream": True,
             "stream_options": stream_options,
-            **params,
         }
         if openai_tools:
             request_args["tools"] = openai_tools
             request_args["tool_choice"] = tool_choice
 
-        try:
+        with openai_errors():
             stream = await self._client.chat.completions.create(**request_args)
-        except Exception as exc:
-            mapped = _map_openai_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise
 
         buffers: dict[int, dict[str, Any]] = {}
         text_acc: list[str] = []
         stop_reason: str | None = None
         usage: ChatInvokeUsage | None = None
 
-        try:
+        with openai_errors():
             chunk: ChatCompletionChunk
             async for chunk in stream:
                 if chunk.usage is not None:
-                    usage = self._parse_usage(chunk.usage)
+                    usage = parse_usage(chunk.usage)
 
                 if not chunk.choices:
                     continue
@@ -349,30 +329,21 @@ class OpenAICompatible(ChatModel):
 
                         buf["emitted"] = True
                         yield StreamToolCall(
-                            tool_call=ToolCall(
-                                id=buf["id"],
-                                function=Function(
-                                    name=buf["name"],
-                                    arguments=buf["arguments"],
-                                ),
+                            tool_call=tool_call(
+                                call_id=buf["id"],
+                                name=buf["name"],
+                                arguments=buf["arguments"],
                             )
                         )
-        except Exception as exc:
-            mapped = _map_openai_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise
 
         yield StreamEnd(
             stop_reason=stop_reason,
             usage=usage,
             tool_calls=[
-                ToolCall(
-                    id=buffers[i]["id"],
-                    function=Function(
-                        name=buffers[i]["name"],
-                        arguments=buffers[i]["arguments"],
-                    ),
+                tool_call(
+                    call_id=buffers[i]["id"],
+                    name=buffers[i]["name"],
+                    arguments=buffers[i]["arguments"],
                 )
                 for i in sorted(buffers)
             ],

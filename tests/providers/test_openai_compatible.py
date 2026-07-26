@@ -4,6 +4,13 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from openai.types.chat import ChatCompletion
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    ChatCompletionMessageFunctionToolCall,
+)
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    Function as OpenAIFunction,
+)
+from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 from pydantic import BaseModel
 
 from llmify.messages import (
@@ -18,7 +25,11 @@ from llmify.messages import (
     UserMessage,
 )
 from llmify.providers import ChatInvokeCompletion
-from llmify.providers.openai_compatible import OpenAICompatible
+from llmify.providers.openai_compatible import (
+    OpenAICompatible,
+    _convert_message,
+    _convert_messages,
+)
 from llmify.tools import FunctionTool
 from llmify.views import StreamEnd, StreamTextDelta, StreamToolCall
 
@@ -52,19 +63,19 @@ def search_tool() -> FunctionTool:
 class TestMessageConversion:
     def test_converts_user_message(self, mock_model: MockChatModel) -> None:
         messages = [UserMessage(content="Hello")]
-        converted = mock_model._convert_messages(messages)
+        converted = _convert_messages(messages)
 
         assert converted == [{"role": "user", "content": "Hello"}]
 
     def test_converts_system_message(self, mock_model: MockChatModel) -> None:
         messages = [SystemMessage(content="You are helpful")]
-        converted = mock_model._convert_messages(messages)
+        converted = _convert_messages(messages)
 
         assert converted == [{"role": "system", "content": "You are helpful"}]
 
     def test_converts_assistant_message(self, mock_model: MockChatModel) -> None:
         messages = [AssistantMessage(content="I can help")]
-        converted = mock_model._convert_messages(messages)
+        converted = _convert_messages(messages)
 
         assert converted == [{"role": "assistant", "content": "I can help"}]
 
@@ -79,7 +90,7 @@ class TestMessageConversion:
                 ),
             ]
         )
-        converted = mock_model._convert_single_message(message)
+        converted = _convert_message(message)
 
         assert converted["role"] == "user"
         assert len(converted["content"]) == 2
@@ -89,7 +100,7 @@ class TestMessageConversion:
 
     def test_converts_tool_result_message(self, mock_model: MockChatModel) -> None:
         message = ToolResultMessage(tool_call_id="call_123", content="Search completed")
-        converted = mock_model._convert_single_message(message)
+        converted = _convert_message(message)
 
         assert converted == {
             "role": "tool",
@@ -111,7 +122,7 @@ class TestMessageConversion:
                 )
             ],
         )
-        converted = mock_model._convert_single_message(message)
+        converted = _convert_message(message)
 
         assert converted["role"] == "assistant"
         assert converted["content"] == "Let me search"
@@ -138,7 +149,7 @@ class TestMessageConversion:
                 )
             ],
         )
-        converted = mock_model._convert_single_message(message)
+        converted = _convert_message(message)
 
         parsed_args = json.loads(converted["tool_calls"][0]["function"]["arguments"])
         assert converted["tool_calls"][0]["function"]["name"] == "search"
@@ -147,6 +158,10 @@ class TestMessageConversion:
 
 
 class TestParameterMerging:
+    def test_rejects_stream_as_constructor_parameter(self) -> None:
+        with pytest.raises(TypeError, match="'stream' is managed"):
+            MockChatModel(stream=False)
+
     def test_merges_default_and_method_params(self) -> None:
         model = MockChatModel(temperature=0.5, max_tokens=100)
         params = model._merge_params({"top_p": 0.9})
@@ -176,6 +191,13 @@ class TestParameterMerging:
 
 
 class TestPlainInvoke:
+    @pytest.mark.asyncio
+    async def test_rejects_stream_as_method_parameter(
+        self, mock_model: MockChatModel
+    ) -> None:
+        with pytest.raises(TypeError, match="'stream' is managed"):
+            await mock_model.invoke([UserMessage(content="Hi")], stream=True)
+
     @pytest.mark.asyncio
     async def test_returns_completion_with_text_content(
         self, mock_model: MockChatModel
@@ -233,10 +255,14 @@ class TestToolInvoke:
     async def test_returns_completion_with_tool_calls(
         self, mock_model: MockChatModel, search_tool: FunctionTool
     ) -> None:
-        mock_tool_call = Mock()
-        mock_tool_call.id = "call_123"
-        mock_tool_call.function.name = "search_web"
-        mock_tool_call.function.arguments = '{"query": "test"}'
+        mock_tool_call = ChatCompletionMessageFunctionToolCall(
+            id="call_123",
+            type="function",
+            function=OpenAIFunction(
+                name="search_web",
+                arguments='{"query": "test"}',
+            ),
+        )
 
         mock_response = Mock(spec=ChatCompletion)
         mock_response.choices = [
@@ -329,6 +355,14 @@ class TestStructuredOutput:
 
 
 class TestStreaming:
+    @pytest.mark.asyncio
+    async def test_rejects_stream_as_stream_parameter(
+        self, mock_model: MockChatModel
+    ) -> None:
+        with pytest.raises(TypeError, match="'stream' is managed"):
+            async for _ in mock_model.stream([UserMessage(content="Hi")], stream=False):
+                pass
+
     @staticmethod
     def _make_chunk(
         *,
@@ -349,11 +383,11 @@ class TestStreaming:
 
     @pytest.mark.asyncio
     async def test_streams_text_and_end_event(self, mock_model: MockChatModel) -> None:
-        usage = Mock(
+        usage = CompletionUsage(
             prompt_tokens=10,
             completion_tokens=4,
             total_tokens=14,
-            prompt_tokens_details=Mock(cached_tokens=3),
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=3),
         )
 
         async def mock_stream():
@@ -521,11 +555,11 @@ class TestStreaming:
 
     @pytest.mark.asyncio
     async def test_tolerates_usage_only_chunk(self, mock_model: MockChatModel) -> None:
-        usage = Mock(
+        usage = CompletionUsage(
             prompt_tokens=5,
             completion_tokens=2,
             total_tokens=7,
-            prompt_tokens_details=Mock(cached_tokens=0),
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=0),
         )
 
         async def mock_stream():

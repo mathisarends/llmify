@@ -14,14 +14,17 @@ from openai import (
 )
 
 from llmify.base import ChatModel
-from llmify.exceptions import CredentialsUnavailableError, OutOfCreditsError
 from llmify.exceptions import AuthenticationError as LLMAuthenticationError
-from llmify.exceptions import ContextLengthExceededError
+from llmify.exceptions import (
+    ContextLengthExceededError,
+    CredentialsUnavailableError,
+    OutOfCreditsError,
+    RetryableError,
+)
 from llmify.exceptions import RateLimitError as LLMRateLimitError
-from llmify.exceptions import RetryableError
 from llmify.messages import UserMessage
-from llmify.providers.openai_compatible import OpenAICompatible, _map_openai_error
-
+from llmify.providers._openai_utils import map_openai_error
+from llmify.providers.openai_compatible import OpenAICompatible
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,21 +64,21 @@ class MockChatModel(OpenAICompatible):
 
 
 # ---------------------------------------------------------------------------
-# _map_openai_error unit tests
+# map_openai_error unit tests
 # ---------------------------------------------------------------------------
 
 
 class TestMapOpenAIError:
     def test_rate_limit_maps_to_llm_rate_limit(self) -> None:
         exc = _rate_limit_error()
-        result = _map_openai_error(exc)
+        result = map_openai_error(exc)
         assert isinstance(result, LLMRateLimitError)
         assert result.status_code == 429
 
     def test_rate_limit_with_insufficient_quota_maps_to_out_of_credits(self) -> None:
         body = {"error": {"code": "insufficient_quota", "message": "quota exceeded"}}
         exc = _rate_limit_error(body)
-        result = _map_openai_error(exc)
+        result = map_openai_error(exc)
         assert isinstance(result, OutOfCreditsError)
 
     def test_rate_limit_parses_retry_after_header(self) -> None:
@@ -88,30 +91,30 @@ class TestMapOpenAIError:
             request=httpx.Request("POST", "https://api.openai.com/"),
         )
         exc = RateLimitError(response=response, body={}, message="rate limited")
-        result = _map_openai_error(exc)
+        result = map_openai_error(exc)
         assert isinstance(result, LLMRateLimitError)
         assert result.retry_after == 30.0
 
     def test_connection_error_maps_to_retryable(self) -> None:
-        result = _map_openai_error(_connection_error())
+        result = map_openai_error(_connection_error())
         assert isinstance(result, RetryableError)
 
     def test_timeout_error_maps_to_retryable(self) -> None:
-        result = _map_openai_error(_timeout_error())
+        result = map_openai_error(_timeout_error())
         assert isinstance(result, RetryableError)
 
     def test_500_status_maps_to_retryable(self) -> None:
-        result = _map_openai_error(_api_status_error(500))
+        result = map_openai_error(_api_status_error(500))
         assert isinstance(result, RetryableError)
         assert result.status_code == 500
 
     def test_503_status_maps_to_retryable(self) -> None:
-        result = _map_openai_error(_api_status_error(503))
+        result = map_openai_error(_api_status_error(503))
         assert isinstance(result, RetryableError)
 
     def test_400_status_passes_through_unchanged(self) -> None:
         exc = _api_status_error(400)
-        result = _map_openai_error(exc)
+        result = map_openai_error(exc)
         assert result is exc
 
     def test_context_length_exceeded_maps_correctly(self) -> None:
@@ -119,25 +122,25 @@ class TestMapOpenAIError:
             "error": {"code": "context_length_exceeded", "message": "too many tokens"}
         }
         exc = _api_status_error(400, body)
-        result = _map_openai_error(exc)
+        result = map_openai_error(exc)
         assert isinstance(result, ContextLengthExceededError)
 
     def test_401_status_maps_to_authentication_error(self) -> None:
-        result = _map_openai_error(_api_status_error(401))
+        result = map_openai_error(_api_status_error(401))
         assert isinstance(result, LLMAuthenticationError)
 
     def test_401_status_maps_to_credentials_unavailable(self) -> None:
         body = {"detail": "Your authentication token is not from a valid issuer."}
-        result = _map_openai_error(_api_status_error(401, body))
+        result = map_openai_error(_api_status_error(401, body))
         assert isinstance(result, CredentialsUnavailableError)
 
     def test_403_status_passes_through_unchanged(self) -> None:
         exc = _api_status_error(403)
-        assert _map_openai_error(exc) is exc
+        assert map_openai_error(exc) is exc
 
     def test_unknown_exception_passes_through_unchanged(self) -> None:
         exc = ValueError("something else")
-        assert _map_openai_error(exc) is exc
+        assert map_openai_error(exc) is exc
 
 
 # ---------------------------------------------------------------------------
