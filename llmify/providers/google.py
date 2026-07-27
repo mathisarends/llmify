@@ -151,10 +151,11 @@ def _convert_messages(
             name = tool_names_by_id.get(message.tool_call_id, message.tool_call_id)
             contents.append(
                 {
-                    "role": "tool",
+                    "role": "user",
                     "parts": [
                         {
                             "function_response": {
+                                "id": message.tool_call_id,
                                 "name": name,
                                 "response": {"result": message.content},
                             }
@@ -170,15 +171,19 @@ def _convert_messages(
                 parts.append({"text": message.text})
             for tool_call in message.tool_calls:
                 tool_names_by_id[tool_call.id] = tool_call.function.name
-                parts.append(
-                    {
-                        "function_call": {
-                            "id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "args": json.loads(tool_call.function.arguments or "{}"),
-                        }
+                part: dict[str, Any] = {
+                    "function_call": {
+                        "id": tool_call.id,
+                        "name": tool_call.function.name,
+                        "args": json.loads(tool_call.function.arguments or "{}"),
                     }
-                )
+                }
+                google_metadata = tool_call.provider_metadata.get("google")
+                if isinstance(google_metadata, dict):
+                    thought_signature = google_metadata.get("thought_signature")
+                    if isinstance(thought_signature, bytes):
+                        part["thought_signature"] = thought_signature
+                parts.append(part)
             contents.append({"role": "model", "parts": parts})
             continue
 
@@ -240,10 +245,43 @@ def _convert_tool(tool: Tool | dict[str, Any]) -> dict[str, Any]:
 def _parse_tool_calls(
     response: google_types.GenerateContentResponse,
 ) -> list[ToolCall]:
+    if (
+        not response.candidates
+        or response.candidates[0].content is None
+        or not response.candidates[0].content.parts
+    ):
+        return []
+
     tool_calls: list[ToolCall] = []
-    for index, function_call in enumerate(response.function_calls or []):
-        tool_calls.append(_parse_function_call(function_call, index=index))
+    for part in response.candidates[0].content.parts:
+        if part.function_call is None:
+            continue
+
+        tool_call = _parse_function_call(
+            part.function_call,
+            index=len(tool_calls),
+        )
+        if part.thought_signature is not None:
+            tool_call.provider_metadata["google"] = {
+                "thought_signature": part.thought_signature
+            }
+        tool_calls.append(tool_call)
     return tool_calls
+
+
+def _parse_text(response: google_types.GenerateContentResponse) -> str:
+    if (
+        not response.candidates
+        or response.candidates[0].content is None
+        or not response.candidates[0].content.parts
+    ):
+        return ""
+
+    return "".join(
+        part.text
+        for part in response.candidates[0].content.parts
+        if isinstance(part.text, str) and part.thought is not True
+    )
 
 
 def _parse_function_call(
@@ -376,13 +414,15 @@ class ChatGoogle(ChatModel):
 
             if output_format is not None:
                 return ChatInvokeCompletion(
-                    completion=output_format.model_validate_json(response.text or "{}"),
+                    completion=output_format.model_validate_json(
+                        _parse_text(response) or "{}"
+                    ),
                     stop_reason=_stop_reason(response),
                     usage=_parse_usage(response.usage_metadata),
                 )
 
             return ChatInvokeCompletion(
-                completion=response.text or "",
+                completion=_parse_text(response),
                 tool_calls=_parse_tool_calls(response),
                 stop_reason=_stop_reason(response),
                 usage=_parse_usage(response.usage_metadata),
@@ -427,9 +467,10 @@ class ChatGoogle(ChatModel):
 
         try:
             async for chunk in stream:
-                if chunk.text:
-                    text_acc.append(chunk.text)
-                    yield StreamTextDelta(delta=chunk.text)
+                chunk_text = _parse_text(chunk)
+                if chunk_text:
+                    text_acc.append(chunk_text)
+                    yield StreamTextDelta(delta=chunk_text)
 
                 for tool_call in _parse_tool_calls(chunk):
                     tool_calls.append(tool_call)

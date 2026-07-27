@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 def _truncate(text: str, max_length: int = 50) -> str:
@@ -54,7 +54,7 @@ class ImageURL(BaseModel):
 
     def __repr__(self) -> str:
         url_repr = self._format_url(self.url, 30)
-        return f"ImageURL(url={repr(url_repr)}, detail={repr(self.detail)}, media_type={repr(self.media_type)})"
+        return f"ImageURL(url={url_repr!r}, detail={self.detail!r}, media_type={self.media_type!r})"
 
 
 class ContentPartImageParam(BaseModel):
@@ -65,7 +65,7 @@ class ContentPartImageParam(BaseModel):
         return str(self.image_url)
 
     def __repr__(self) -> str:
-        return f"ContentPartImageParam(image_url={repr(self.image_url)})"
+        return f"ContentPartImageParam(image_url={self.image_url!r})"
 
 
 class Function(BaseModel):
@@ -78,19 +78,20 @@ class Function(BaseModel):
 
     def __repr__(self) -> str:
         args_repr = _truncate(repr(self.arguments), 50)
-        return f"Function(name={repr(self.name)}, arguments={args_repr})"
+        return f"Function(name={self.name!r}, arguments={args_repr})"
 
 
 class ToolCall(BaseModel):
     id: str
     function: Function
     type: Literal["function"] = "function"
+    provider_metadata: dict[str, object] = Field(default_factory=dict, repr=False)
 
     def __str__(self) -> str:
         return f"ToolCall[{self.id}]: {self.function}"
 
     def __repr__(self) -> str:
-        return f"ToolCall(id={repr(self.id)}, function={repr(self.function)})"
+        return f"ToolCall(id={self.id!r}, function={self.function!r})"
 
 
 class _MessageRole(StrEnum):
@@ -127,7 +128,7 @@ class UserMessage(_MessageBase):
         return f"UserMessage(content={self.text})"
 
     def __repr__(self) -> str:
-        return f"UserMessage(content={repr(self.text)})"
+        return f"UserMessage(content={self.text!r})"
 
 
 class SystemMessage(_MessageBase):
@@ -150,7 +151,7 @@ class SystemMessage(_MessageBase):
         return f"SystemMessage(content={self.text})"
 
     def __repr__(self) -> str:
-        return f"SystemMessage(content={repr(self.text)})"
+        return f"SystemMessage(content={self.text!r})"
 
 
 class AssistantMessage(_MessageBase):
@@ -179,7 +180,7 @@ class AssistantMessage(_MessageBase):
         return f"AssistantMessage(content={self.text})"
 
     def __repr__(self) -> str:
-        return f"AssistantMessage(content={repr(self.text)})"
+        return f"AssistantMessage(content={self.text!r})"
 
 
 class ToolResultMessage(_MessageBase):
@@ -191,7 +192,7 @@ class ToolResultMessage(_MessageBase):
         return f"ToolResultMessage(tool_call_id={self.tool_call_id}, content={_truncate(self.content)})"
 
     def __repr__(self) -> str:
-        return f"ToolResultMessage(tool_call_id={repr(self.tool_call_id)}, content={repr(_truncate(self.content))})"
+        return f"ToolResultMessage(tool_call_id={self.tool_call_id!r}, content={_truncate(self.content)!r})"
 
 
 type Message = UserMessage | SystemMessage | AssistantMessage | ToolResultMessage

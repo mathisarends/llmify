@@ -6,10 +6,128 @@ pytest.importorskip("google.genai")
 
 from google.genai import types
 
-from llmify.providers.google import _parse_tool_calls, _parse_usage, _stop_reason
+from llmify import AssistantMessage, ToolResultMessage
+from llmify.messages import Function, ToolCall
+from llmify.providers.google import (
+    _convert_messages,
+    _parse_text,
+    _parse_tool_calls,
+    _parse_usage,
+    _stop_reason,
+)
 
 
 class TestGoogleResponseParsing:
+    def test_round_trips_function_call_metadata_and_result(self) -> None:
+        messages = [
+            AssistantMessage(
+                tool_calls=[
+                    ToolCall(
+                        id="call_123",
+                        function=Function(
+                            name="get_weather",
+                            arguments='{"city": "Berlin"}',
+                        ),
+                        provider_metadata={
+                            "google": {"thought_signature": b"signature"}
+                        },
+                    )
+                ]
+            ),
+            ToolResultMessage(
+                tool_call_id="call_123",
+                content="18 degrees Celsius",
+            ),
+        ]
+
+        contents, _ = _convert_messages(messages)
+
+        assert contents == [
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "function_call": {
+                            "id": "call_123",
+                            "name": "get_weather",
+                            "args": {"city": "Berlin"},
+                        },
+                        "thought_signature": b"signature",
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "function_response": {
+                            "id": "call_123",
+                            "name": "get_weather",
+                            "response": {"result": "18 degrees Celsius"},
+                        }
+                    }
+                ],
+            },
+        ]
+
+    def test_parses_text_alongside_function_calls(self) -> None:
+        response = types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(
+                        parts=[
+                            types.Part(text="Let me check. "),
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    name="get_weather",
+                                    args={"city": "Berlin"},
+                                )
+                            ),
+                            types.Part(text="One moment."),
+                        ]
+                    )
+                )
+            ]
+        )
+
+        assert _parse_text(response) == "Let me check. One moment."
+
+    def test_returns_empty_text_for_function_call_only(self) -> None:
+        response = types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(
+                        parts=[
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    name="get_weather",
+                                    args={"city": "Berlin"},
+                                )
+                            )
+                        ]
+                    )
+                )
+            ]
+        )
+
+        assert _parse_text(response) == ""
+
+    def test_excludes_thought_parts_from_text(self) -> None:
+        response = types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(
+                        parts=[
+                            types.Part(text="internal reasoning", thought=True),
+                            types.Part(text="Visible answer"),
+                        ]
+                    )
+                )
+            ]
+        )
+
+        assert _parse_text(response) == "Visible answer"
+
     def test_parses_direct_function_calls(self) -> None:
         response = types.GenerateContentResponse(
             candidates=[
@@ -21,7 +139,8 @@ class TestGoogleResponseParsing:
                                     id="call_123",
                                     name="get_weather",
                                     args={"city": "Berlin", "unit": "celsius"},
-                                )
+                                ),
+                                thought_signature=b"signature",
                             )
                         ]
                     )
@@ -34,6 +153,9 @@ class TestGoogleResponseParsing:
         assert len(tool_calls) == 1
         assert tool_calls[0].id == "call_123"
         assert tool_calls[0].function.name == "get_weather"
+        assert tool_calls[0].provider_metadata == {
+            "google": {"thought_signature": b"signature"}
+        }
         assert json.loads(tool_calls[0].function.arguments) == {
             "city": "Berlin",
             "unit": "celsius",
