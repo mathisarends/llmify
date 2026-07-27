@@ -4,7 +4,7 @@ from typing import Any, Self
 
 import httpx
 
-from llmify.auth.codex_cli import CodexCliAuth
+from llmify.auth.codex_cli import CodexCliAuth, read_codex_credentials
 from llmify.providers._openai_utils import resolve_api_key
 from llmify.providers.openai_responses import ChatOpenAIResponses
 from llmify.utils import timed
@@ -61,12 +61,14 @@ class ChatCodex(ChatOpenAIResponses):
     ) -> Self:
         """Build a client from the login of the locally installed Codex CLI.
 
-        Takes account id and access token from `~/.codex/auth.json` (or
-        `$CODEX_HOME/auth.json`) and keeps the token fresh for the lifetime of
-        this instance. Raises `CodexCredentialsError` if the CLI is not logged
-        in with a ChatGPT account.
+        Reads account id and access token from `~/.codex/auth.json` (or
+        `$CODEX_HOME/auth.json`); nothing is sent or written here. The token is
+        then kept fresh for the lifetime of this instance, refreshed from the
+        request path as it approaches expiry. Raises `CodexCredentialsError` if
+        the CLI is not logged in with a ChatGPT account.
         """
-        auth = CodexCliAuth(auth_path=auth_path)
+        codex_credentials = read_codex_credentials(auth_path=auth_path)
+        auth = CodexCliAuth(codex_credentials)
         return cls(
             model=model,
             api_key=auth,

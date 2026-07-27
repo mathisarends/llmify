@@ -1,12 +1,11 @@
 import asyncio
 import base64
-import io
 import json
 import time
-import urllib.error
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from llmify.auth import (
@@ -15,7 +14,8 @@ from llmify.auth import (
     CodexCredentialsError,
     codex_auth_path,
     codex_home,
-    load_codex_credentials,
+    read_codex_credentials,
+    refresh_codex_credentials,
 )
 from llmify.auth.codex_cli import CodexRefreshResponse
 from llmify.exceptions import CredentialsUnavailableError
@@ -51,6 +51,13 @@ def _refreshed(**overrides) -> CodexRefreshResponse:
     )
 
 
+def _http_response(status: int, body: dict | str) -> httpx.Response:
+    request = httpx.Request("POST", "https://auth.openai.com/oauth/token")
+    if isinstance(body, str):
+        return httpx.Response(status, text=body, request=request)
+    return httpx.Response(status, json=body, request=request)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep every test away from the developer's real ~/.codex."""
@@ -60,6 +67,11 @@ def _isolate_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 @pytest.fixture
 def auth_file(tmp_path: Path) -> Path:
     return _write_auth(tmp_path / "auth.json")
+
+
+@pytest.fixture
+def stale_auth_file(tmp_path: Path) -> Path:
+    return _write_auth(tmp_path / "auth.json", {"access_token": _jwt(-10)})
 
 
 class TestCodexHome:
@@ -117,59 +129,116 @@ class TestCodexCredentials:
         assert credentials.is_fresh
 
 
-class TestLoadCodexCredentials:
-    def test_returns_fresh_token_without_refreshing(self, auth_file: Path) -> None:
-        with patch("llmify.auth.codex_cli._request_refresh") as request_refresh:
-            credentials = load_codex_credentials(auth_path=auth_file)
+class TestReadCodexCredentials:
+    def test_returns_the_stored_login(self, auth_file: Path) -> None:
+        credentials = read_codex_credentials(auth_path=auth_file)
 
-        request_refresh.assert_not_called()
         assert credentials.account_id == "acct-123"
         assert credentials.auth_path == auth_file
         assert credentials.refreshed is False
-
-    def test_reads_expiry_from_the_access_token(self, auth_file: Path) -> None:
-        credentials = load_codex_credentials(auth_path=auth_file)
-
         assert credentials.expires_in == pytest.approx(3600, abs=5)
 
-    def test_opaque_token_is_used_as_is(self, tmp_path: Path) -> None:
+    def test_returns_an_expired_token_as_is(self, stale_auth_file: Path) -> None:
+        before = stale_auth_file.read_text()
+
+        credentials = read_codex_credentials(auth_path=stale_auth_file)
+
+        assert credentials.is_fresh is False
+        assert stale_auth_file.read_text() == before
+
+    def test_opaque_token_has_no_expiry(self, tmp_path: Path) -> None:
         path = _write_auth(tmp_path / "auth.json", {"access_token": "opaque"})
 
-        with patch("llmify.auth.codex_cli._request_refresh") as request_refresh:
-            credentials = load_codex_credentials(auth_path=path)
+        credentials = read_codex_credentials(auth_path=path)
 
-        request_refresh.assert_not_called()
         assert credentials.expires_at is None
         assert credentials.access_token == "opaque"
 
-    def test_refreshes_a_token_that_is_about_to_expire(self, tmp_path: Path) -> None:
+    def test_missing_file(self, tmp_path: Path) -> None:
+        with pytest.raises(CodexCredentialsError, match="codex login"):
+            read_codex_credentials(auth_path=tmp_path / "auth.json")
+
+    def test_invalid_json(self, tmp_path: Path) -> None:
+        path = tmp_path / "auth.json"
+        path.write_text("{not json", encoding="utf-8")
+
+        with pytest.raises(CodexCredentialsError, match="not a usable auth file"):
+            read_codex_credentials(auth_path=path)
+
+    def test_api_key_login(self, tmp_path: Path) -> None:
+        path = tmp_path / "auth.json"
+        path.write_text(json.dumps({"auth_mode": "apikey"}), encoding="utf-8")
+
+        with pytest.raises(CodexCredentialsError, match="Only ChatGPT OAuth logins"):
+            read_codex_credentials(auth_path=path)
+
+    def test_without_tokens(self, tmp_path: Path) -> None:
+        path = tmp_path / "auth.json"
+        path.write_text(json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
+
+        with pytest.raises(CodexCredentialsError, match="No ChatGPT tokens"):
+            read_codex_credentials(auth_path=path)
+
+    def test_is_a_credentials_error(self) -> None:
+        assert issubclass(CodexCredentialsError, CredentialsUnavailableError)
+
+
+@pytest.mark.asyncio
+class TestRefreshCodexCredentials:
+    async def test_leaves_a_fresh_token_alone(self, auth_file: Path) -> None:
+        with patch("llmify.auth.codex_cli._request_refresh") as request_refresh:
+            credentials = await refresh_codex_credentials(auth_path=auth_file)
+
+        request_refresh.assert_not_called()
+        assert credentials.refreshed is False
+
+    async def test_refreshes_a_token_that_is_about_to_expire(
+        self, tmp_path: Path
+    ) -> None:
         path = _write_auth(tmp_path / "auth.json", {"access_token": _jwt(30)})
         refreshed = _refreshed()
 
         with patch(
-            "llmify.auth.codex_cli._request_refresh", return_value=refreshed
+            "llmify.auth.codex_cli._request_refresh",
+            AsyncMock(return_value=refreshed),
         ) as request_refresh:
-            credentials = load_codex_credentials(auth_path=path)
+            credentials = await refresh_codex_credentials(auth_path=path)
 
-        request_refresh.assert_called_once_with("refresh-1")
+        request_refresh.assert_awaited_once_with("refresh-1")
         assert credentials.refreshed is True
         assert credentials.access_token == refreshed.access_token
         assert credentials.account_id == "acct-123"
 
-    def test_writes_rotated_tokens_back_to_disk(self, tmp_path: Path) -> None:
-        path = _write_auth(tmp_path / "auth.json", {"access_token": _jwt(-10)})
+    async def test_adopts_a_token_another_process_refreshed(
+        self, stale_auth_file: Path
+    ) -> None:
+        # The Codex CLI may have refreshed since we last read the file; using
+        # its token avoids rotating the refresh token a second time.
+        _write_auth(stale_auth_file, {"access_token": _jwt(3600)})
+
+        with patch("llmify.auth.codex_cli._request_refresh") as request_refresh:
+            credentials = await refresh_codex_credentials(auth_path=stale_auth_file)
+
+        request_refresh.assert_not_called()
+        assert credentials.is_fresh
+
+    async def test_writes_rotated_tokens_back_to_disk(
+        self, stale_auth_file: Path
+    ) -> None:
         refreshed = _refreshed()
 
-        with patch("llmify.auth.codex_cli._request_refresh", return_value=refreshed):
-            load_codex_credentials(auth_path=path)
+        with patch(
+            "llmify.auth.codex_cli._request_refresh", AsyncMock(return_value=refreshed)
+        ):
+            await refresh_codex_credentials(auth_path=stale_auth_file)
 
-        tokens = json.loads(path.read_text())["tokens"]
-        assert tokens["access_token"] == refreshed.access_token
-        assert tokens["refresh_token"] == "refresh-2"
-        assert tokens["id_token"] == "id-2"
-        assert json.loads(path.read_text())["last_refresh"]
+        data = json.loads(stale_auth_file.read_text())
+        assert data["tokens"]["access_token"] == refreshed.access_token
+        assert data["tokens"]["refresh_token"] == "refresh-2"
+        assert data["tokens"]["id_token"] == "id-2"
+        assert data["last_refresh"]
 
-    def test_preserves_keys_it_does_not_know(self, tmp_path: Path) -> None:
+    async def test_preserves_keys_it_does_not_know(self, tmp_path: Path) -> None:
         path = _write_auth(
             tmp_path / "auth.json",
             {"access_token": _jwt(-10), "unknown_token_key": "keep-me"},
@@ -177,138 +246,105 @@ class TestLoadCodexCredentials:
             unknown_top_level_key={"nested": 1},
         )
 
-        with patch("llmify.auth.codex_cli._request_refresh", return_value=_refreshed()):
-            load_codex_credentials(auth_path=path)
+        with patch(
+            "llmify.auth.codex_cli._request_refresh",
+            AsyncMock(return_value=_refreshed()),
+        ):
+            await refresh_codex_credentials(auth_path=path)
 
         data = json.loads(path.read_text())
         assert data["unknown_top_level_key"] == {"nested": 1}
         assert data["OPENAI_API_KEY"] is None
         assert data["tokens"]["unknown_token_key"] == "keep-me"
 
-    def test_leaves_no_temporary_file_behind(self, tmp_path: Path) -> None:
-        path = _write_auth(tmp_path / "auth.json", {"access_token": _jwt(-10)})
-
-        with patch("llmify.auth.codex_cli._request_refresh", return_value=_refreshed()):
-            load_codex_credentials(auth_path=path)
+    async def test_leaves_no_temporary_file_behind(
+        self, tmp_path: Path, stale_auth_file: Path
+    ) -> None:
+        with patch(
+            "llmify.auth.codex_cli._request_refresh",
+            AsyncMock(return_value=_refreshed()),
+        ):
+            await refresh_codex_credentials(auth_path=stale_auth_file)
 
         assert [entry.name for entry in tmp_path.iterdir()] == ["auth.json"]
 
-    def test_keeps_the_old_token_when_the_refresh_omits_one(
-        self, tmp_path: Path
+    async def test_keeps_the_old_token_when_the_refresh_omits_one(
+        self, stale_auth_file: Path
     ) -> None:
-        path = _write_auth(tmp_path / "auth.json", {"access_token": _jwt(-10)})
         partial = CodexRefreshResponse(access_token=_jwt(3600))
 
-        with patch("llmify.auth.codex_cli._request_refresh", return_value=partial):
-            load_codex_credentials(auth_path=path)
+        with patch(
+            "llmify.auth.codex_cli._request_refresh", AsyncMock(return_value=partial)
+        ):
+            await refresh_codex_credentials(auth_path=stale_auth_file)
 
-        assert json.loads(path.read_text())["tokens"]["refresh_token"] == "refresh-1"
+        tokens = json.loads(stale_auth_file.read_text())["tokens"]
+        assert tokens["refresh_token"] == "refresh-1"
 
-    def test_expired_token_is_returned_as_is_without_refresh(
-        self, tmp_path: Path
-    ) -> None:
-        path = _write_auth(tmp_path / "auth.json", {"access_token": _jwt(-10)})
-        before = path.read_text()
-
-        with patch("llmify.auth.codex_cli._request_refresh") as request_refresh:
-            credentials = load_codex_credentials(auth_path=path, allow_refresh=False)
-
-        request_refresh.assert_not_called()
-        assert credentials.is_fresh is False
-        assert path.read_text() == before
-
-
-class TestLoadCodexCredentialsErrors:
-    def test_missing_file(self, tmp_path: Path) -> None:
-        with pytest.raises(CodexCredentialsError, match="codex login"):
-            load_codex_credentials(auth_path=tmp_path / "auth.json")
-
-    def test_invalid_json(self, tmp_path: Path) -> None:
-        path = tmp_path / "auth.json"
-        path.write_text("{not json", encoding="utf-8")
-
-        with pytest.raises(CodexCredentialsError, match="not a usable auth file"):
-            load_codex_credentials(auth_path=path)
-
-    def test_api_key_login(self, tmp_path: Path) -> None:
-        path = tmp_path / "auth.json"
-        path.write_text(json.dumps({"auth_mode": "apikey"}), encoding="utf-8")
-
-        with pytest.raises(CodexCredentialsError, match="Only ChatGPT OAuth logins"):
-            load_codex_credentials(auth_path=path)
-
-    def test_without_tokens(self, tmp_path: Path) -> None:
-        path = tmp_path / "auth.json"
-        path.write_text(json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
-
-        with pytest.raises(CodexCredentialsError, match="No ChatGPT tokens"):
-            load_codex_credentials(auth_path=path)
-
-    def test_expired_without_refresh_token(self, tmp_path: Path) -> None:
+    async def test_expired_without_refresh_token(self, tmp_path: Path) -> None:
         path = _write_auth(
             tmp_path / "auth.json",
             {"access_token": _jwt(-10), "refresh_token": None},
         )
 
         with pytest.raises(CodexCredentialsError, match="no refresh token"):
-            load_codex_credentials(auth_path=path)
-
-    def test_is_a_credentials_error(self) -> None:
-        assert issubclass(CodexCredentialsError, CredentialsUnavailableError)
+            await refresh_codex_credentials(auth_path=path)
 
 
+@pytest.mark.asyncio
 class TestRefreshRequestErrors:
-    @pytest.fixture
-    def stale_auth_file(self, tmp_path: Path) -> Path:
-        return _write_auth(tmp_path / "auth.json", {"access_token": _jwt(-10)})
-
-    def _http_error(self, status: int, body: dict) -> urllib.error.HTTPError:
-        return urllib.error.HTTPError(
-            url="https://auth.openai.com/oauth/token",
-            code=status,
-            msg="error",
-            hdrs=None,  # type: ignore[arg-type]
-            fp=io.BytesIO(json.dumps(body).encode()),
-        )
-
     @pytest.mark.parametrize(
         "code",
         ["refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated"],
     )
-    def test_rejected_refresh_token_asks_for_a_new_login(
+    async def test_rejected_refresh_token_asks_for_a_new_login(
         self, stale_auth_file: Path, code: str
     ) -> None:
-        error = self._http_error(400, {"error": code})
+        response = _http_response(400, {"error": code})
 
-        with patch("urllib.request.urlopen", side_effect=error):
+        with patch("httpx.AsyncClient.post", AsyncMock(return_value=response)):
             with pytest.raises(CodexCredentialsError, match=f"{code}.*codex login"):
-                load_codex_credentials(auth_path=stale_auth_file)
+                await refresh_codex_credentials(auth_path=stale_auth_file)
 
-    def test_other_http_error_reports_the_status(self, stale_auth_file: Path) -> None:
-        error = self._http_error(500, {"error": "server_error"})
+    async def test_other_http_error_reports_the_status(
+        self, stale_auth_file: Path
+    ) -> None:
+        response = _http_response(500, {"error": "server_error"})
 
-        with patch("urllib.request.urlopen", side_effect=error):
+        with patch("httpx.AsyncClient.post", AsyncMock(return_value=response)):
             with pytest.raises(CodexCredentialsError, match="HTTP 500"):
-                load_codex_credentials(auth_path=stale_auth_file)
+                await refresh_codex_credentials(auth_path=stale_auth_file)
 
-    def test_network_error(self, stale_auth_file: Path) -> None:
-        error = urllib.error.URLError("connection refused")
+    async def test_network_error(self, stale_auth_file: Path) -> None:
+        error = httpx.ConnectError("connection refused")
 
-        with patch("urllib.request.urlopen", side_effect=error):
+        with patch("httpx.AsyncClient.post", AsyncMock(side_effect=error)):
             with pytest.raises(CodexCredentialsError, match="network error"):
-                load_codex_credentials(auth_path=stale_auth_file)
+                await refresh_codex_credentials(auth_path=stale_auth_file)
 
-    def test_unreadable_refresh_response(self, stale_auth_file: Path) -> None:
-        with patch("urllib.request.urlopen") as urlopen:
-            urlopen.return_value.__enter__.return_value.read.return_value = b"nonsense"
+    async def test_unreadable_refresh_response(self, stale_auth_file: Path) -> None:
+        response = _http_response(200, "nonsense")
 
+        with patch("httpx.AsyncClient.post", AsyncMock(return_value=response)):
             with pytest.raises(CodexCredentialsError, match="unexpected response"):
-                load_codex_credentials(auth_path=stale_auth_file)
+                await refresh_codex_credentials(auth_path=stale_auth_file)
+
+    async def test_does_not_touch_the_file_when_the_refresh_fails(
+        self, stale_auth_file: Path
+    ) -> None:
+        before = stale_auth_file.read_text()
+        response = _http_response(500, {"error": "server_error"})
+
+        with patch("httpx.AsyncClient.post", AsyncMock(return_value=response)):
+            with pytest.raises(CodexCredentialsError):
+                await refresh_codex_credentials(auth_path=stale_auth_file)
+
+        assert stale_auth_file.read_text() == before
 
 
 class TestCodexCliAuth:
     def test_exposes_the_login_it_reads(self, auth_file: Path) -> None:
-        auth = CodexCliAuth(auth_path=auth_file)
+        auth = CodexCliAuth(read_codex_credentials(auth_path=auth_file))
 
         assert auth.account_id == "acct-123"
         assert auth.auth_path == auth_file
@@ -318,34 +354,31 @@ class TestCodexCliAuth:
         path = _write_auth(tmp_path / "auth.json", {"account_id": None})
 
         with pytest.raises(CodexCredentialsError, match="No ChatGPT account id"):
-            CodexCliAuth(auth_path=path)
+            CodexCliAuth(read_codex_credentials(auth_path=path))
 
-    def test_reads_the_login_eagerly(self, tmp_path: Path) -> None:
-        with pytest.raises(CodexCredentialsError, match="codex login"):
-            CodexCliAuth(auth_path=tmp_path / "auth.json")
-
-    def test_does_not_refresh_an_expired_token_on_construction(
-        self, tmp_path: Path
+    def test_accepts_an_expired_login_without_touching_it(
+        self, stale_auth_file: Path
     ) -> None:
-        path = _write_auth(tmp_path / "auth.json", {"access_token": _jwt(-10)})
+        before = stale_auth_file.read_text()
 
-        with patch("llmify.auth.codex_cli._request_refresh") as request_refresh:
-            auth = CodexCliAuth(auth_path=path)
+        with patch("httpx.AsyncClient.post") as post:
+            auth = CodexCliAuth(read_codex_credentials(auth_path=stale_auth_file))
 
-        request_refresh.assert_not_called()
+        post.assert_not_called()
         assert not auth.credentials.is_fresh
+        assert stale_auth_file.read_text() == before
 
     @pytest.mark.asyncio
     async def test_hands_out_the_cached_token_while_it_is_fresh(
         self, auth_file: Path
     ) -> None:
-        auth = CodexCliAuth(auth_path=auth_file)
+        auth = CodexCliAuth(read_codex_credentials(auth_path=auth_file))
 
-        with patch("llmify.auth.codex_cli.load_codex_credentials") as load:
+        with patch("llmify.auth.codex_cli.refresh_codex_credentials") as refresh:
             assert await auth() == auth.credentials.access_token
             assert await auth() == auth.credentials.access_token
 
-        load.assert_not_called()
+        refresh.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_refreshes_a_token_that_is_about_to_expire(
@@ -354,8 +387,10 @@ class TestCodexCliAuth:
         path = _write_auth(tmp_path / "auth.json", {"access_token": _jwt(30)})
         refreshed = _refreshed()
 
-        with patch("llmify.auth.codex_cli._request_refresh", return_value=refreshed):
-            auth = CodexCliAuth(auth_path=path)
+        with patch(
+            "llmify.auth.codex_cli._request_refresh", AsyncMock(return_value=refreshed)
+        ):
+            auth = CodexCliAuth(read_codex_credentials(auth_path=path))
             token = await auth()
 
         assert token == refreshed.access_token
@@ -370,15 +405,15 @@ class TestCodexCliAuth:
         path = _write_auth(tmp_path / "auth.json", {"access_token": _jwt(30)})
         refreshed = _refreshed()
 
-        def slow_refresh(refresh_token: str) -> CodexRefreshResponse:
-            time.sleep(0.01)
+        async def slow_refresh(refresh_token: str) -> CodexRefreshResponse:
+            await asyncio.sleep(0.01)
             return refreshed
 
         with patch(
             "llmify.auth.codex_cli._request_refresh", side_effect=slow_refresh
         ) as request_refresh:
-            auth = CodexCliAuth(auth_path=path)
+            auth = CodexCliAuth(read_codex_credentials(auth_path=path))
             tokens = await asyncio.gather(*(auth() for _ in range(8)))
 
-        request_refresh.assert_called_once()
+        request_refresh.assert_awaited_once()
         assert set(tokens) == {refreshed.access_token}

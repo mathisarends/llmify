@@ -6,19 +6,18 @@ The idea, and the reverse-engineered refresh flow below (endpoint, client id,
 
 import asyncio
 import base64
-import json
 import os
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from llmify.exceptions import CredentialsUnavailableError
 
 _REFRESH_URL = "https://auth.openai.com/oauth/token"
 _CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+_REFRESH_TIMEOUT_SECONDS = 30.0
 _REFRESH_SKEW_SECONDS = 120.0
 
 _INVALID_REFRESH_TOKEN_CODES = frozenset(
@@ -98,10 +97,14 @@ class _JwtClaims(BaseModel):
 
 
 class CodexCliAuth:
-    """Async `api_key` provider that keeps the Codex CLI's access token fresh."""
+    """Async `api_key` provider that keeps the Codex CLI's access token fresh.
 
-    def __init__(self, auth_path: Path | None = None) -> None:
-        credentials = load_codex_credentials(auth_path=auth_path, allow_refresh=False)
+    Takes the credentials to start from, typically straight from
+    `read_codex_credentials()`, and refreshes them from the request path as
+    they approach expiry.
+    """
+
+    def __init__(self, credentials: CodexCredentials) -> None:
         if not credentials.account_id:
             raise CodexCredentialsError(
                 f"No ChatGPT account id found in {credentials.auth_path}. "
@@ -130,8 +133,8 @@ class CodexCliAuth:
         # reused and invalidate the login for the CLI too.
         async with self._lock:
             if not self._credentials.is_fresh:
-                self._credentials = await asyncio.to_thread(
-                    load_codex_credentials, auth_path=self._credentials.auth_path
+                self._credentials = await refresh_codex_credentials(
+                    auth_path=self._credentials.auth_path
                 )
             return self._credentials.access_token
 
@@ -147,55 +150,62 @@ def codex_auth_path() -> Path:
     return codex_home() / "auth.json"
 
 
-def load_codex_credentials(
-    *,
-    auth_path: Path | None = None,
-    allow_refresh: bool = True,
-) -> CodexCredentials:
-    """Read the Codex credentials, refreshing them when near expiry.
+def read_codex_credentials(*, auth_path: Path | None = None) -> CodexCredentials:
+    """Read the credentials the Codex CLI has on disk.
 
-    Blocking: touches the filesystem and, when refreshing, the network.
-    With `allow_refresh=False` an expired token is returned as-is instead.
+    Never accesses the network, so the returned token may be expired — check
+    `is_fresh` and hand over to `refresh_codex_credentials` when it is not.
+    """
+    path = auth_path or codex_auth_path()
+    return _credentials(path, _read_auth(path).tokens)
+
+
+async def refresh_codex_credentials(
+    *, auth_path: Path | None = None
+) -> CodexCredentials:
+    """Return usable credentials, refreshing them over the network when needed.
+
+    Reads `auth.json` first — another process may have refreshed it already, in
+    which case its token is adopted instead of rotating a new one.
     """
     path = auth_path or codex_auth_path()
     auth = _read_auth(path)
-    tokens = auth.tokens
+    credentials = _credentials(path, auth.tokens)
 
-    if not tokens.access_token:
-        raise CodexCredentialsError(
-            f"No ChatGPT tokens found in {path}. Run `codex login` first."
-        )
-
-    credentials = CodexCredentials(
-        access_token=tokens.access_token,
-        account_id=tokens.account_id,
-        auth_path=path,
-        expires_at=_jwt_exp(tokens.access_token),
-        refreshed=False,
-    )
-
-    if credentials.is_fresh or not allow_refresh:
+    if credentials.is_fresh:
         return credentials
 
+    tokens = auth.tokens
     if not tokens.refresh_token:
         raise CodexCredentialsError(
             f"Access token in {path} is expired and no refresh token is available. "
             "Run `codex login` to re-authenticate."
         )
 
-    refreshed = _request_refresh(tokens.refresh_token)
+    refreshed = await _request_refresh(tokens.refresh_token)
     tokens.access_token = refreshed.access_token or tokens.access_token
     tokens.refresh_token = refreshed.refresh_token or tokens.refresh_token
     tokens.id_token = refreshed.id_token or tokens.id_token
     auth.last_refresh = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
     _write_auth(path, auth)
 
+    return _credentials(path, tokens, refreshed=True)
+
+
+def _credentials(
+    path: Path, tokens: CodexTokens, *, refreshed: bool = False
+) -> CodexCredentials:
+    if not tokens.access_token:
+        raise CodexCredentialsError(
+            f"No ChatGPT tokens found in {path}. Run `codex login` first."
+        )
+
     return CodexCredentials(
         access_token=tokens.access_token,
         account_id=tokens.account_id,
         auth_path=path,
         expires_at=_jwt_exp(tokens.access_token),
-        refreshed=True,
+        refreshed=refreshed,
     )
 
 
@@ -256,42 +266,38 @@ def _jwt_exp(token: str) -> float | None:
     return claims.exp
 
 
-def _request_refresh(refresh_token: str) -> CodexRefreshResponse:
-    body = json.dumps(
-        {
-            "client_id": _CLIENT_ID,
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-        }
-    ).encode()
-
-    request = urllib.request.Request(
-        _REFRESH_URL,
-        data=body,
-        headers={"Content-Type": "application/json"},
-    )
-
+async def _request_refresh(refresh_token: str) -> CodexRefreshResponse:
     try:
-        with urllib.request.urlopen(request) as response:
-            return CodexRefreshResponse.model_validate_json(response.read())
-    except ValidationError as exc:
+        async with httpx.AsyncClient(timeout=_REFRESH_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                _REFRESH_URL,
+                json={
+                    "client_id": _CLIENT_ID,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                },
+            )
+    except httpx.RequestError as exc:
         raise CodexCredentialsError(
-            f"Token refresh returned an unexpected response: {exc}"
+            f"Token refresh failed (network error): {exc}"
         ) from None
-    except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode(errors="replace")
-        error_code = _error_code(error_body)
+
+    if response.is_error:
+        error_code = _error_code(response.text)
         if error_code in _INVALID_REFRESH_TOKEN_CODES:
             raise CodexCredentialsError(
                 f"Refresh token is no longer valid ({error_code}). "
                 "Run `codex login` to re-authenticate."
-            ) from None
+            )
         raise CodexCredentialsError(
-            f"Token refresh failed (HTTP {exc.code}): {error_body}"
-        ) from None
-    except urllib.error.URLError as exc:
+            f"Token refresh failed (HTTP {response.status_code}): {response.text}"
+        )
+
+    try:
+        return CodexRefreshResponse.model_validate_json(response.content)
+    except ValidationError as exc:
         raise CodexCredentialsError(
-            f"Token refresh failed (network error): {exc.reason}"
+            f"Token refresh returned an unexpected response: {exc}"
         ) from None
 
 

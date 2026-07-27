@@ -4,7 +4,8 @@ from .codex_cli import (
     CodexCredentialsError,
     codex_auth_path,
     codex_home,
-    load_codex_credentials,
+    read_codex_credentials,
+    refresh_codex_credentials,
 )
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "CodexCredentialsError",
     "codex_auth_path",
     "codex_home",
-    "load_codex_credentials",
+    "read_codex_credentials",
+    "refresh_codex_credentials",
 ]

@@ -451,25 +451,34 @@ llm = ChatCodex.from_codex_cli(model="gpt-5.6-terra")
 ```
 
 This reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`) for the account id
-and access token, and refreshes the token as it approaches expiry, writing the
-rotated tokens back so the CLI keeps working. The approach is borrowed from
+and access token — no network access, no writes. From the request path onwards
+the token is refreshed as it approaches expiry, and the rotated tokens are
+written back so the CLI keeps working. The approach is borrowed from
 [llm-openai-via-codex](https://github.com/simonw/llm-openai-via-codex).
 
 For the credentials themselves, a different `auth.json`, or one token provider
-shared across several clients, use `CodexCliAuth` directly:
+shared across several clients, compose the two pieces yourself:
 
 ```python
 from llmify import ChatCodex, CodexCliAuth
+from llmify.auth import read_codex_credentials
 
-auth = CodexCliAuth()               # or CodexCliAuth(auth_path=...)
-print(auth.credentials.expires_in)  # seconds until the access token expires
+credentials = read_codex_credentials()  # or read_codex_credentials(auth_path=...)
+print(credentials.expires_in)           # seconds until the access token expires
 
+auth = CodexCliAuth(credentials)
 llm = ChatCodex(
     model="gpt-5.6-terra",
-    api_key=auth,                   # awaited before every request
+    api_key=auth,                       # awaited before every request
     chatgpt_account_id=auth.account_id,
 )
 ```
+
+`read_codex_credentials()` only ever reads the file. Its async counterpart
+`refresh_codex_credentials()` is what performs the OAuth refresh and the
+write-back — `CodexCliAuth` calls it from the request path when the token is
+about to expire, and applications that want to control that themselves can call
+it directly.
 
 A missing or unusable login raises `CodexCredentialsError`, a subclass of
 `CredentialsUnavailableError`.

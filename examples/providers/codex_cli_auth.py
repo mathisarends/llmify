@@ -8,15 +8,15 @@ across several clients.
 import asyncio
 
 from llmify import ChatCodex, CodexCliAuth, UserMessage
-from llmify.auth import codex_auth_path, codex_home
+from llmify.auth import codex_auth_path, codex_home, read_codex_credentials
 
 
 async def main() -> None:
     print(f"Codex home: {codex_home()}")
     print(f"Auth file:  {codex_auth_path()} (exists: {codex_auth_path().exists()})")
 
-    auth = CodexCliAuth()
-    credentials = auth.credentials
+    credentials = read_codex_credentials()
+    auth = CodexCliAuth(credentials)
 
     print(f"Loaded from: {credentials.auth_path}")
     print(f"Account ID:  {credentials.account_id or '-'}")
