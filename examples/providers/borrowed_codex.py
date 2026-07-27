@@ -1,35 +1,21 @@
-"""Call Codex with a borrowed ChatGPT session.
+"""Call Codex with the session of the locally installed Codex CLI.
 
-Put the values into your environment (see `.env.example`):
-
-    CODEX_ACCESS_KEY   access token of the ChatGPT session
-    CODEX_ACCOUNT_ID   account id sent as `ChatGPT-Account-Id` header
-    CODEX_MODEL        model slug to call
+No environment variables needed — `codex login` is the setup step. The access
+token is refreshed automatically when it approaches expiry.
 """
 
 import asyncio
-import os
-
-from dotenv import load_dotenv
 
 from llmify import ChatCodex, SystemMessage, UserMessage
 
-load_dotenv(override=True)
-
 
 async def main() -> None:
-    llm = ChatCodex(
-        model=os.environ["CODEX_MODEL"],
-        api_key=os.environ["CODEX_ACCESS_KEY"],
-        chatgpt_account_id=os.environ["CODEX_ACCOUNT_ID"],
-    )
+    llm = ChatCodex.from_codex_cli(model="gpt-5.6-terra")
 
     response = await llm.invoke(
         [
             SystemMessage(content="You are a helpful assistant."),
-            UserMessage(
-                content="Was würdest du sagen ist das Geheimnis für die plätzliche Verbesserung von Coding Agents"
-            ),
+            UserMessage(content="Explain OAuth refresh tokens in two sentences."),
         ]
     )
     print(response.completion)

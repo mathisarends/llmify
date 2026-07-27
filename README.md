@@ -438,6 +438,45 @@ configures the required `ChatGPT-Account-Id` header from `chatgpt_account_id`.
 The endpoint URL is fixed by the provider and does not need to be supplied by
 callers.
 
+This is a reverse-engineered endpoint: it authenticates with a ChatGPT
+subscription rather than an API key, and OpenAI does not document or support it.
+
+#### Borrowing the Codex CLI login
+
+If the [Codex CLI](https://github.com/openai/codex) is installed and logged in
+(`codex login`), its session can be used directly — no environment variables:
+
+```python
+llm = ChatCodex.from_codex_cli(model="gpt-5.6-terra")
+```
+
+This reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`) for the account id
+and access token, and refreshes the token as it approaches expiry, writing the
+rotated tokens back so the CLI keeps working. The approach is borrowed from
+[llm-openai-via-codex](https://github.com/simonw/llm-openai-via-codex).
+
+For the credentials themselves, a different `auth.json`, or one token provider
+shared across several clients, use `CodexCliAuth` directly:
+
+```python
+from llmify import ChatCodex, CodexCliAuth
+
+auth = CodexCliAuth()               # or CodexCliAuth(auth_path=...)
+print(auth.credentials.expires_in)  # seconds until the access token expires
+
+llm = ChatCodex(
+    model="gpt-5.6-terra",
+    api_key=auth,                   # awaited before every request
+    chatgpt_account_id=auth.account_id,
+)
+```
+
+A missing or unusable login raises `CodexCredentialsError`, a subclass of
+`CredentialsUnavailableError`.
+
+Full runnable examples: `examples/providers/borrowed_codex.py` and
+`examples/providers/codex_cli_auth.py`
+
 ### Azure OpenAI
 
 ```python

@@ -1,3 +1,7 @@
+import base64
+import json
+import time
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -5,7 +9,27 @@ import pytest
 pytest.importorskip("openai")
 
 from llmify import ChatCodex
+from llmify.auth import CodexCliAuth, CodexCredentialsError
 from llmify.exceptions import CredentialsUnavailableError
+
+
+def _auth_file(path: Path, account_id: str | None = "acct-123") -> Path:
+    claims = json.dumps({"exp": time.time() + 3600}).encode()
+    payload = base64.urlsafe_b64encode(claims).decode().rstrip("=")
+    path.write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": f"header.{payload}.signature",
+                    "refresh_token": "refresh-1",
+                    "account_id": account_id,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 class TestChatCodex:
@@ -62,3 +86,45 @@ class TestChatCodex:
 
         with pytest.raises(CredentialsUnavailableError, match="CODEX_ACCESS_KEY"):
             ChatCodex(model="gpt-test", chatgpt_account_id="account-123")
+
+
+class TestChatCodexFromCodexCli:
+    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    @pytest.mark.asyncio
+    async def test_borrows_account_id_and_token_from_the_cli(
+        self, mock_client, tmp_path: Path
+    ) -> None:
+        auth_path = _auth_file(tmp_path / "auth.json")
+
+        ChatCodex.from_codex_cli(model="gpt-test", auth_path=auth_path)
+
+        stored_token = json.loads(auth_path.read_text())["tokens"]["access_token"]
+        kwargs = mock_client.call_args.kwargs
+
+        assert kwargs["default_headers"] == {"ChatGPT-Account-Id": "acct-123"}
+        assert isinstance(kwargs["api_key"], CodexCliAuth)
+        assert await kwargs["api_key"]() == stored_token
+
+    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    def test_forwards_model_options(self, mock_client, tmp_path: Path) -> None:
+        llm = ChatCodex.from_codex_cli(
+            model="gpt-test",
+            auth_path=_auth_file(tmp_path / "auth.json"),
+            temperature=0.2,
+            max_retries=5,
+        )
+
+        assert llm.model == "gpt-test"
+        assert mock_client.call_args.kwargs["max_retries"] == 5
+
+    def test_reports_a_missing_login(self, tmp_path: Path) -> None:
+        with pytest.raises(CodexCredentialsError, match="codex login"):
+            ChatCodex.from_codex_cli(
+                model="gpt-test", auth_path=tmp_path / "missing.json"
+            )
+
+    def test_reports_a_login_without_account_id(self, tmp_path: Path) -> None:
+        auth_path = _auth_file(tmp_path / "auth.json", account_id=None)
+
+        with pytest.raises(CodexCredentialsError, match="No ChatGPT account id"):
+            ChatCodex.from_codex_cli(model="gpt-test", auth_path=auth_path)
