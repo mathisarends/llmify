@@ -2,7 +2,7 @@
 
 ![llmify banner](static/banner.png)
 
-A lightweight, type-safe Python library for LLM chat completions.
+A type-safe Python library for LLM chat completions.
 
 **Features:**
 
@@ -11,8 +11,33 @@ A lightweight, type-safe Python library for LLM chat completions.
 - Built-in tool calling support
 - Async streaming
 - Image analysis support
+- Automatic retries for transient failures, with per-retry callbacks
 - Optional token usage and cost tracking
-- Minimal dependencies, maximum flexibility
+
+## Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Core Features](#core-features)
+  - [Message Types](#message-types)
+  - [Structured Outputs](#structured-outputs)
+  - [Tool Calling](#tool-calling)
+  - [Streaming](#streaming)
+  - [Retries](#retries)
+  - [Token Usage Tracking](#token-usage-tracking)
+- [Configuration](#configuration)
+  - [Environment Variables](#environment-variables)
+  - [Model Parameters](#model-parameters)
+- [Providers](#providers)
+  - [OpenAI](#openai)
+  - [OpenAI Responses API](#openai-responses-api)
+  - [Codex](#codex)
+  - [Azure OpenAI](#azure-openai)
+  - [Anthropic](#anthropic)
+  - [Cerebras](#cerebras)
+  - [Google Gemini](#google-gemini)
+- [Credits](#credits)
+- [License](#license)
 
 ## Installation
 
@@ -275,69 +300,59 @@ asyncio.run(main())
 
 Full runnable example: `examples/streaming_tool_calls.py`
 
+### Retries
+
+All bundled providers retry transient connection, timeout, rate-limit, and server
+errors through the same llmify retry layer. `max_retries` is the number of
+additional attempts after the initial request and defaults to `2`; set it to `0`
+to disable automatic retries:
+
+```python
+llm = ChatOpenAIResponses(model="gpt-5.4-mini", max_retries=5)
+```
+
+Rate-limit `Retry-After` headers are respected, with exponential backoff and
+jitter for other transient failures. `invoke()` safely discards an incomplete
+attempt before retrying. `stream()` retries only until its first event has been
+emitted; after that it raises `RetryableError` rather than replaying duplicate
+output.
+
+Each scheduled retry is reported through a sync or async `on_retry` callback:
+
+```python
+from llmify import RetryEvent
+
+def report_retry(event: RetryEvent) -> None:
+    print(
+        f"Attempt {event.failed_attempt}/{event.max_attempts} failed; "
+        f"retry {event.retry_number}/{event.max_retries} "
+        f"in {event.delay:.1f}s: {event.error}"
+    )
+
+llm = ChatOpenAIResponses(model="gpt-5.4-mini", max_retries=5, on_retry=report_retry)
+```
+
+Pass `on_retry` to `invoke()` or `stream()` to override the client-level callback
+for a single call. Callback exceptions cancel the retry and propagate to the caller.
+
 ### Token Usage Tracking
 
-Every provider exposes the model it talks to via the required `.model` property:
+Every response carries `usage`, and every provider exposes its model as `llm.model`.
+With the optional `py-llmify[tokens]` extra, a `TokenTracker` aggregates usage and
+Tokenary-backed USD costs across calls and providers:
 
 ```python
-llm = ChatOpenAI(model="gpt-4o")
-print(llm.model)  # "gpt-4o"
-```
-
-Token tracking is an optional feature. Install `py-llmify[tokens]`, then create a
-`TokenTracker` and feed it the usage you care about. Its `add` method accepts a
-`ChatInvokeUsage`, a full `ChatInvokeCompletion`, or a `StreamEnd` event, together
-with the model name (conveniently available as `llm.model`). The same tracker can
-aggregate usage and Tokenary-backed USD costs across many calls and models:
-
-```python
-from llmify import ChatOpenAI, ChatAnthropic, UserMessage
-from llmify.tokens import ModelName, TokenTracker, calculate_cost, calculate_costs
+from llmify.tokens import TokenTracker, calculate_cost
 
 tracker = TokenTracker()
-gpt_model = ModelName.GPT_4O
-claude_model = ModelName.CLAUDE_SONNET_4_20250514
-gpt = ChatOpenAI(model=gpt_model)
-claude = ChatAnthropic(model=claude_model)
 
-# Pass the completion object directly...
-r1 = await gpt.invoke([UserMessage(content="Hi")])
-tracker.add(r1, model=gpt_model)
+response = await llm.invoke([UserMessage(content="Hi")])
+tracker.add(response, model=llm.model)  # also accepts a StreamEnd or ChatInvokeUsage
 
-r2 = await gpt.invoke([UserMessage(content="How are you?")])
-tracker.add(r2, model=gpt_model)
-
-# ...or a StreamEnd event (or a raw ChatInvokeUsage).
-async for event in claude.stream([UserMessage(content="Hi")]):
-    if event.type == "end":
-        tracker.add(event, model=claude_model)
-
-summary = tracker.summary()     # UsageSummary across both providers
-print(summary.entry_count)              # 3
-print(summary.total_tokens)             # e.g. 84
-print(summary.total_prompt_tokens)
-print(summary.total_completion_tokens)
-print(summary.total_prompt_cached_tokens)
-
-cost = calculate_cost(r1, model=gpt_model)  # Tokenary CostBreakdown
-print(cost.total_cost)
-
-# Aggregate an existing same-model chain without building a tracker.
-chain_cost = calculate_costs([r1, r2], model=gpt_model)
-print(chain_cost.total_cost)
-
-# A tracker also supports multi-model chains because every entry is tagged.
-cost_summary = tracker.cost_summary()
-print(cost_summary.currency)                # "USD"
-print(cost_summary.total_cost)
-print(tracker.costs())                      # per-call Tokenary CostBreakdown list
-
-print(tracker.entries)          # per-call TokenUsageEntry list (each tagged with `model`)
-tracker.reset()                 # start a fresh accounting window
+print(tracker.summary().total_tokens)       # UsageSummary over all entries
+print(tracker.cost_summary().total_cost)    # USD across models
+print(calculate_cost(response, model=llm.model).total_cost)  # single call
 ```
-
-Cost calculation uses Tokenary's bundled model catalog. An unknown model raises
-`KeyError`; missing usage raises `ValueError`.
 
 Full runnable example: `examples/token_tracking.py`
 
@@ -386,53 +401,6 @@ response = await llm.invoke(
 ```
 
 Supported parameters: `temperature`, `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`.
-
-### Retries
-
-All bundled providers retry transient connection, timeout, rate-limit, and
-server errors through the same llmify retry layer. This includes OpenAI Chat
-Completions and Responses, Azure OpenAI, Cerebras, Anthropic, Google, Codex,
-and custom `OpenAICompatible` providers. `max_retries` is the number of
-additional attempts after the initial request and defaults to `2`:
-
-```python
-llm = ChatOpenAIResponses(
-    model="gpt-5.4-mini",
-    max_retries=5,
-)
-```
-
-`invoke()` safely discards an incomplete attempt before retrying. `stream()`
-retries only until its first event has been emitted; after that it raises
-`RetryableError` rather than replaying duplicate output.
-Rate-limit `Retry-After` headers are respected, with exponential backoff and
-jitter used for other transient failures. Set `max_retries=0` to disable
-automatic retries.
-
-Every provider exposes each scheduled retry through a sync or async `on_retry`
-callback:
-
-```python
-from llmify import RetryEvent
-
-
-def report_retry(event: RetryEvent) -> None:
-    print(
-        f"Attempt {event.failed_attempt}/{event.max_attempts} failed; "
-        f"retry {event.retry_number}/{event.max_retries} "
-        f"in {event.delay:.1f}s: {event.error}"
-    )
-
-
-llm = ChatOpenAIResponses(
-    model="gpt-5.4-mini",
-    max_retries=5,
-    on_retry=report_retry,
-)
-```
-
-Pass `on_retry` to `invoke()` or `stream()` to override the client-level callback
-for one call. Callback exceptions cancel the retry and propagate to the caller.
 
 ## Providers
 
