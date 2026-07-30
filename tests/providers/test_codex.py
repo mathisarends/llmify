@@ -45,7 +45,7 @@ class TestChatCodex:
             api_key="access-token",
             base_url="https://chatgpt.com/backend-api/codex",
             timeout=60.0,
-            max_retries=2,
+            max_retries=0,
             default_headers={"ChatGPT-Account-Id": "account-123"},
         )
 
@@ -115,7 +115,8 @@ class TestChatCodexFromCli:
         )
 
         assert llm.model == "gpt-test"
-        assert mock_client.call_args.kwargs["max_retries"] == 5
+        assert llm._default_max_retries == 5
+        assert mock_client.call_args.kwargs["max_retries"] == 0
 
     @patch("llmify.providers.openai_responses.AsyncOpenAI")
     def test_forwards_the_reasoning_effort(self, mock_client, tmp_path: Path) -> None:

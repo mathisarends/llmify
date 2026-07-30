@@ -16,7 +16,8 @@ from openai.types.responses import (
     ResponseUsage,
 )
 
-from llmify import ChatOpenAIResponses
+import llmify.retries as retries_provider
+from llmify import ChatOpenAIResponses, RetryEvent
 from llmify.exceptions import RetryableError
 from llmify.messages import (
     AssistantMessage,
@@ -77,7 +78,11 @@ async def _stream(*events):
 async def _failing_stream(*events):
     for event in events:
         yield event
-    raise APIError(
+    raise _overloaded_error()
+
+
+def _overloaded_error() -> APIError:
+    return APIError(
         "Our servers are currently overloaded. Please try again later.",
         httpx.Request("POST", "https://api.openai.com/v1/responses"),
         body={"type": "server_error"},
@@ -173,6 +178,12 @@ class TestConfiguration:
         with pytest.raises(TypeError, match="must be an integer"):
             ChatOpenAIResponses(model="gpt-test", max_retries=max_retries)
 
+    def test_llmify_owns_the_responses_retry_budget(self) -> None:
+        model = ChatOpenAIResponses(model="gpt-test", max_retries=4)
+
+        assert model._default_max_retries == 4
+        assert model._client.max_retries == 0
+
 
 class TestInvoke:
     @pytest.mark.asyncio
@@ -241,6 +252,89 @@ class TestInvoke:
             await model.invoke([UserMessage(content="Hi")])
 
         assert model._client.responses.create.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_reports_request_retries_to_sync_callback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        events: list[RetryEvent] = []
+        sleep = AsyncMock()
+        monkeypatch.setattr(retries_provider.asyncio, "sleep", sleep)
+        monkeypatch.setattr(retries_provider.random, "uniform", lambda _a, _b: 1.0)
+        model = ChatOpenAIResponses(
+            model="gpt-test",
+            max_retries=3,
+            on_retry=events.append,
+        )
+        model._client.responses.create = AsyncMock(
+            side_effect=[
+                _overloaded_error(),
+                _stream(_completed(_response(), 0)),
+            ]
+        )
+
+        await model.invoke([UserMessage(content="Hi")])
+
+        assert len(events) == 1
+        event = events[0]
+        assert event.retry_number == 1
+        assert event.max_retries == 3
+        assert event.delay == 0.5
+        assert event.failed_attempt == 1
+        assert event.next_attempt == 2
+        assert event.max_attempts == 4
+        assert "overloaded" in str(event.error)
+        sleep.assert_awaited_once_with(0.5)
+
+    @pytest.mark.asyncio
+    async def test_per_call_async_callback_overrides_client_callback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        default_callback = AsyncMock()
+        call_callback = AsyncMock()
+        monkeypatch.setattr(retries_provider.asyncio, "sleep", AsyncMock())
+        model = ChatOpenAIResponses(
+            model="gpt-test",
+            max_retries=1,
+            on_retry=default_callback,
+        )
+        model._client.responses.create = AsyncMock(
+            side_effect=[
+                _overloaded_error(),
+                _stream(_completed(_response(), 0)),
+            ]
+        )
+
+        await model.invoke(
+            [UserMessage(content="Hi")],
+            on_retry=call_callback,
+        )
+
+        call_callback.assert_awaited_once()
+        default_callback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_callback_can_cancel_the_retry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleep = AsyncMock()
+        monkeypatch.setattr(retries_provider.asyncio, "sleep", sleep)
+
+        def cancel(_event: RetryEvent) -> None:
+            raise RuntimeError("cancel retry")
+
+        model = ChatOpenAIResponses(
+            model="gpt-test",
+            max_retries=2,
+            on_retry=cancel,
+        )
+        model._client.responses.create = AsyncMock(side_effect=_overloaded_error())
+
+        with pytest.raises(RuntimeError, match="cancel retry"):
+            await model.invoke([UserMessage(content="Hi")])
+
+        assert model._client.responses.create.await_count == 1
+        sleep.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_sends_the_reasoning_effort(self) -> None:

@@ -30,6 +30,7 @@ from .providers import (
     StreamEnd,
     StreamEvent,
 )
+from .retries import RetryCallback, RetryEvent
 from .tools import (
     Tool,
     FunctionTool,
@@ -179,4 +180,6 @@ __all__ = [
     "ContextLengthExceededError",
     "AuthenticationError",
     "CredentialsUnavailableError",
+    "RetryCallback",
+    "RetryEvent",
 ]

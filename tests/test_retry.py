@@ -1,7 +1,7 @@
 import pytest
 
-from llmify._retry import retry_delay
 from llmify.exceptions import RateLimitError, RetryableError
+from llmify.retries import RetryEvent, retry_delay
 
 
 def test_uses_retry_after_from_rate_limit() -> None:
@@ -21,6 +21,19 @@ def test_uses_capped_exponential_backoff(
     retry_number: int,
     expected: float,
 ) -> None:
-    monkeypatch.setattr("llmify._retry.random.uniform", lambda _start, _end: 1.0)
+    monkeypatch.setattr("llmify.retries.random.uniform", lambda _start, _end: 1.0)
 
     assert retry_delay(RetryableError("transient"), retry_number) == expected
+
+
+def test_retry_event_exposes_attempt_numbers() -> None:
+    event = RetryEvent(
+        retry_number=2,
+        max_retries=4,
+        delay=1.0,
+        error=RetryableError("transient"),
+    )
+
+    assert event.failed_attempt == 2
+    assert event.next_attempt == 3
+    assert event.max_attempts == 5

@@ -1,11 +1,11 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, Literal, overload
+from typing import Any, Literal, Never, overload
 
 import httpx
 from pydantic import BaseModel
 
 try:
-    from openai import AsyncOpenAI
+    from openai import AsyncOpenAI, OpenAIError
     from openai.types.responses import (
         Response,
         ResponseCompletedEvent,
@@ -23,7 +23,6 @@ except ImportError:
         "Install it with: pip install py-llmify[openai]"
     )
 
-from llmify._retry import sleep_before_retry
 from llmify.base import ChatModel
 from llmify.exceptions import LLMifyError, RateLimitError, RetryableError
 from llmify.messages import (
@@ -38,13 +37,13 @@ from llmify.messages import (
 )
 from llmify.providers._openai_utils import (
     map_openai_error,
-    openai_errors,
     parse_usage,
     reject_stream_parameter,
     resolve_api_key,
     tool_call,
     tool_schemas,
 )
+from llmify.retries import RetryCallback, sleep_before_retry
 from llmify.tools import Tool
 from llmify.views import (
     ChatInvokeCompletion,
@@ -87,6 +86,7 @@ class ChatOpenAIResponses(ChatModel):
         store: bool = False,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
+        on_retry: RetryCallback | None = None,
         default_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ):
@@ -106,22 +106,33 @@ class ChatOpenAIResponses(ChatModel):
         api_key = resolve_api_key(api_key, "OPENAI_API_KEY", "OpenAI")
 
         self._store = store
+        self._on_retry = on_retry
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,
-            max_retries=max_retries,
+            max_retries=0,
             default_headers=default_headers,
         )
 
     @overload
     async def invoke[T: BaseModel](
-        self, messages: list[Message], output_format: type[T], **kwargs: Any
+        self,
+        messages: list[Message],
+        output_format: type[T],
+        *,
+        on_retry: RetryCallback | None = None,
+        **kwargs: Any,
     ) -> ChatInvokeCompletion[T]: ...
 
     @overload
     async def invoke(
-        self, messages: list[Message], output_format: None = None, **kwargs: Any
+        self,
+        messages: list[Message],
+        output_format: None = None,
+        *,
+        on_retry: RetryCallback | None = None,
+        **kwargs: Any,
     ) -> ChatInvokeCompletion[str]: ...
 
     async def invoke[T: BaseModel](
@@ -130,6 +141,7 @@ class ChatOpenAIResponses(ChatModel):
         output_format: type[T] | None = None,
         tools: list[Tool | dict] | None = None,
         tool_choice: Literal["auto", "required", "none"] = "auto",
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
         reject_stream_parameter(kwargs)
@@ -139,6 +151,7 @@ class ChatOpenAIResponses(ChatModel):
             tool_choice=tool_choice,
             params=_responses_params(self._merge_params(kwargs)),
             text=_json_schema_format(output_format),
+            on_retry=on_retry if on_retry is not None else self._on_retry,
         )
 
         if output_format is None:
@@ -168,6 +181,7 @@ class ChatOpenAIResponses(ChatModel):
         messages: list[Message],
         tools: list[Tool | dict] | None = None,
         tool_choice: Literal["auto", "required", "none"] = "auto",
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         reject_stream_parameter(kwargs)
@@ -176,6 +190,7 @@ class ChatOpenAIResponses(ChatModel):
             tools=tools,
             tool_choice=tool_choice,
             params=_responses_params(self._merge_params(kwargs)),
+            on_retry=on_retry if on_retry is not None else self._on_retry,
         ):
             yield event
 
@@ -186,6 +201,7 @@ class ChatOpenAIResponses(ChatModel):
         tool_choice: Literal["auto", "required", "none"],
         params: dict[str, Any],
         text: dict[str, Any] | None,
+        on_retry: RetryCallback | None,
     ) -> StreamEnd:
         for retry_number in range(self._default_max_retries + 1):
             end = StreamEnd()
@@ -203,7 +219,12 @@ class ChatOpenAIResponses(ChatModel):
             except _RetryableStreamError as exc:
                 if retry_number == self._default_max_retries:
                     raise exc.error from exc.__cause__
-                await sleep_before_retry(exc.error, retry_number)
+                await sleep_before_retry(
+                    exc.error,
+                    retry_number,
+                    self._default_max_retries,
+                    on_retry,
+                )
 
         raise RuntimeError("Retry loop exhausted without returning or raising.")
 
@@ -214,6 +235,7 @@ class ChatOpenAIResponses(ChatModel):
         tool_choice: Literal["auto", "required", "none"],
         params: dict[str, Any],
         text: dict[str, Any] | None = None,
+        on_retry: RetryCallback | None = None,
     ) -> AsyncIterator[StreamEvent]:
         for retry_number in range(self._default_max_retries + 1):
             emitted = False
@@ -231,7 +253,12 @@ class ChatOpenAIResponses(ChatModel):
             except _RetryableStreamError as exc:
                 if emitted or retry_number == self._default_max_retries:
                     raise exc.error from exc.__cause__
-                await sleep_before_retry(exc.error, retry_number)
+                await sleep_before_retry(
+                    exc.error,
+                    retry_number,
+                    self._default_max_retries,
+                    on_retry,
+                )
 
     async def _stream_once(
         self,
@@ -258,8 +285,10 @@ class ChatOpenAIResponses(ChatModel):
             request["tools"] = _convert_tools(tools)
             request["tool_choice"] = tool_choice
 
-        with openai_errors():
+        try:
             stream = await self._client.responses.create(**request)
+        except OpenAIError as exc:
+            _raise_stream_error(exc)
 
         text_acc: list[str] = []
         tool_calls: list[ToolCall] = []
@@ -286,13 +315,8 @@ class ChatOpenAIResponses(ChatModel):
 
                 elif isinstance(event, (ResponseFailedEvent, ResponseErrorEvent)):
                     raise _event_error(event)
-        except Exception as exc:
-            mapped = map_openai_error(exc)
-            if isinstance(mapped, RetryableError):
-                raise _RetryableStreamError(mapped) from exc
-            if mapped is not exc:
-                raise mapped from exc
-            raise
+        except (LLMifyError, OpenAIError) as exc:
+            _raise_stream_error(exc)
 
         yield StreamEnd(
             stop_reason=stop_reason,
@@ -463,3 +487,12 @@ def _event_error(
     if code in {"server_error", "vector_store_timeout"}:
         return RetryableError(message)
     return LLMifyError(message)
+
+
+def _raise_stream_error(exc: Exception) -> Never:
+    mapped = map_openai_error(exc)
+    if isinstance(mapped, RetryableError):
+        raise _RetryableStreamError(mapped) from exc
+    if mapped is not exc:
+        raise mapped from exc
+    raise exc

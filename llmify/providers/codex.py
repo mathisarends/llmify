@@ -7,6 +7,7 @@ import httpx
 from llmify.auth.codex_cli import CodexCliAuth, read_codex_credentials
 from llmify.providers._openai_utils import resolve_api_key
 from llmify.providers.openai_responses import ChatOpenAIResponses, ReasoningEffort
+from llmify.retries import RetryCallback
 
 _CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
@@ -24,6 +25,7 @@ class ChatCodex(ChatOpenAIResponses):
         store: bool = False,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
+        on_retry: RetryCallback | None = None,
         default_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ):
@@ -47,6 +49,7 @@ class ChatCodex(ChatOpenAIResponses):
             store=store,
             timeout=timeout,
             max_retries=max_retries,
+            on_retry=on_retry,
             default_headers=headers,
             **kwargs,
         )
@@ -64,6 +67,7 @@ class ChatCodex(ChatOpenAIResponses):
         store: bool = False,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
+        on_retry: RetryCallback | None = None,
         default_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> Self:
@@ -92,6 +96,7 @@ class ChatCodex(ChatOpenAIResponses):
             store=store,
             timeout=timeout,
             max_retries=max_retries,
+            on_retry=on_retry,
             default_headers=default_headers,
             **kwargs,
         )

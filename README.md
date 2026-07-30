@@ -408,6 +408,31 @@ Rate-limit `Retry-After` headers are respected, with exponential backoff and
 jitter used for other transient stream failures. Set `max_retries=0` to disable
 automatic retries.
 
+`ChatOpenAIResponses` and `ChatCodex` expose every scheduled retry through a
+sync or async `on_retry` callback:
+
+```python
+from llmify import RetryEvent
+
+
+def report_retry(event: RetryEvent) -> None:
+    print(
+        f"Attempt {event.failed_attempt}/{event.max_attempts} failed; "
+        f"retry {event.retry_number}/{event.max_retries} "
+        f"in {event.delay:.1f}s: {event.error}"
+    )
+
+
+llm = ChatOpenAIResponses(
+    model="gpt-5.4-mini",
+    max_retries=5,
+    on_retry=report_retry,
+)
+```
+
+Pass `on_retry` to `invoke()` or `stream()` to override the client-level callback
+for one call. Callback exceptions cancel the retry and propagate to the caller.
+
 ## Providers
 
 ### OpenAI
