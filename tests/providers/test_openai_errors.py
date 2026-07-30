@@ -59,8 +59,9 @@ def _timeout_error() -> APITimeoutError:
 
 
 class MockChatModel(OpenAICompatible):
-    def __init__(self):
-        ChatModel.__init__(self, model="gpt-4")
+    def __init__(self, **kwargs):
+        kwargs.setdefault("max_retries", 0)
+        ChatModel.__init__(self, model="gpt-4", **kwargs)
         self._client = AsyncMock()
 
 
@@ -179,7 +180,7 @@ class TestMapOpenAIError:
 class TestInvokeErrorMapping:
     @pytest.mark.asyncio
     async def test_invoke_raises_rate_limit_error(self) -> None:
-        model = MockChatModel()
+        model = MockChatModel(max_retries=0)
         model._client.chat.completions.create = AsyncMock(
             side_effect=_rate_limit_error()
         )

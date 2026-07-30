@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -10,6 +10,7 @@ from llmify.exceptions import (
     LLMifyError,
 )
 from llmify.messages import UserMessage
+from llmify.providers.azure import ChatAzureOpenAI
 from llmify.providers.openai import ChatOpenAI
 
 
@@ -19,6 +20,12 @@ def _api_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestClientConfiguration:
+    def test_llmify_owns_the_retry_budget(self) -> None:
+        llm = ChatOpenAI(max_retries=4)
+
+        assert llm._default_max_retries == 4
+        assert llm._client.max_retries == 0
+
     def test_base_url_is_forwarded(self) -> None:
         llm = ChatOpenAI(base_url="https://chatgpt.com/backend-api/codex")
 
@@ -54,6 +61,16 @@ class TestClientConfiguration:
 
         await client._refresh_api_key()
         assert client.auth_headers["Authorization"] == "Bearer tok-second"
+
+    @patch("llmify.providers.azure.AsyncAzureOpenAI")
+    def test_azure_disables_sdk_retries(self, client) -> None:
+        ChatAzureOpenAI(
+            api_key="test-key",
+            azure_endpoint="https://example.openai.azure.com",
+            max_retries=4,
+        )
+
+        assert client.call_args.kwargs["max_retries"] == 0
 
 
 class TestCredentialsUnavailableError:

@@ -37,6 +37,7 @@ from llmify.messages import (
     ToolResultMessage,
     UserMessage,
 )
+from llmify.retries import RetryCallback, retry_call, retry_stream
 from llmify.tools import Tool
 from llmify.views import (
     ChatInvokeCompletion,
@@ -49,6 +50,8 @@ from llmify.views import (
 
 
 def _map_google_error(exc: Exception) -> Exception:
+    if isinstance(exc, httpx.TransportError):
+        return RetryableError(str(exc))
     if not isinstance(exc, google_errors.APIError):
         return exc
 
@@ -57,7 +60,15 @@ def _map_google_error(exc: Exception) -> Exception:
     message_lower = message.lower()
 
     if status_code == 429:
-        return RateLimitError(str(exc))
+        retry_after: float | None = None
+        response = getattr(exc, "response", None)
+        raw = response.headers.get("retry-after") if response is not None else None
+        if raw:
+            try:
+                retry_after = float(raw)
+            except ValueError:
+                pass
+        return RateLimitError(str(exc), retry_after=retry_after)
     if status_code == 402:
         return OutOfCreditsError(str(exc))
     if status_code in (401, 403):
@@ -70,7 +81,7 @@ def _map_google_error(exc: Exception) -> Exception:
         )
     ):
         return ContextLengthExceededError(str(exc))
-    if status_code is not None and status_code >= 500:
+    if status_code is not None and (status_code in {408, 409} or status_code >= 500):
         return RetryableError(str(exc), status_code=status_code)
     return exc
 
@@ -358,6 +369,7 @@ class ChatGoogle(ChatModel):
         response_format: dict[str, Any] | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -372,12 +384,18 @@ class ChatGoogle(ChatModel):
             response_format=response_format,
             timeout=timeout,
             max_retries=max_retries,
+            on_retry=on_retry,
             **kwargs,
         )
         if api_key is None:
             api_key = os.getenv("GEMINI_API_KEY")
 
-        self._client = genai.Client(api_key=api_key).aio
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options=google_types.HttpOptions(
+                retry_options=google_types.HttpRetryOptions(attempts=1)
+            ),
+        ).aio
 
     @overload
     async def invoke[T: BaseModel](
@@ -395,9 +413,10 @@ class ChatGoogle(ChatModel):
         output_format: type[T] | None = None,
         tools: list[Tool | dict[str, Any]] | None = None,
         tool_choice: Literal["auto", "required", "none"] = "auto",
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
-        try:
+        async def invoke_once() -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
             contents, system_instruction = _convert_messages(messages)
             config = _build_config(
                 self._merge_params(kwargs),
@@ -427,17 +446,20 @@ class ChatGoogle(ChatModel):
                 stop_reason=_stop_reason(response),
                 usage=_parse_usage(response.usage_metadata),
             )
-        except Exception as exc:
-            mapped = _map_google_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise
+
+        return await retry_call(
+            invoke_once,
+            max_retries=self._default_max_retries,
+            on_retry=on_retry if on_retry is not None else self._on_retry,
+            map_error=_map_google_error,
+        )
 
     async def stream(
         self,
         messages: list[Message],
         tools: list[Tool | dict[str, Any]] | None = None,
         tool_choice: Literal["auto", "required", "none"] = "auto",
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         contents, system_instruction = _convert_messages(messages)
@@ -448,43 +470,44 @@ class ChatGoogle(ChatModel):
             tool_choice=tool_choice,
         )
 
-        try:
-            stream = await self._client.models.generate_content_stream(
-                model=self._model,
-                contents=contents,
-                config=config or None,
-            )
-        except Exception as exc:
-            mapped = _map_google_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise
+        async for event in retry_stream(
+            lambda: self._stream_once(contents, config),
+            max_retries=self._default_max_retries,
+            on_retry=on_retry if on_retry is not None else self._on_retry,
+            map_error=_map_google_error,
+        ):
+            yield event
+
+    async def _stream_once(
+        self,
+        contents: list[dict[str, Any]],
+        config: google_types.GenerateContentConfig | None,
+    ) -> AsyncIterator[StreamEvent]:
+        stream = await self._client.models.generate_content_stream(
+            model=self._model,
+            contents=contents,
+            config=config or None,
+        )
 
         text_acc: list[str] = []
         tool_calls: list[ToolCall] = []
         stop_reason: str | None = None
         usage: ChatInvokeUsage | None = None
 
-        try:
-            async for chunk in stream:
-                chunk_text = _parse_text(chunk)
-                if chunk_text:
-                    text_acc.append(chunk_text)
-                    yield StreamTextDelta(delta=chunk_text)
+        async for chunk in stream:
+            chunk_text = _parse_text(chunk)
+            if chunk_text:
+                text_acc.append(chunk_text)
+                yield StreamTextDelta(delta=chunk_text)
 
-                for tool_call in _parse_tool_calls(chunk):
-                    tool_calls.append(tool_call)
-                    yield StreamToolCall(tool_call=tool_call)
+            for tool_call in _parse_tool_calls(chunk):
+                tool_calls.append(tool_call)
+                yield StreamToolCall(tool_call=tool_call)
 
-                stop_reason = _stop_reason(chunk) or stop_reason
-                chunk_usage = _parse_usage(chunk.usage_metadata)
-                if chunk_usage is not None:
-                    usage = chunk_usage
-        except Exception as exc:
-            mapped = _map_google_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise
+            stop_reason = _stop_reason(chunk) or stop_reason
+            chunk_usage = _parse_usage(chunk.usage_metadata)
+            if chunk_usage is not None:
+                usage = chunk_usage
 
         yield StreamEnd(
             stop_reason=stop_reason,

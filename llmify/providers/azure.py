@@ -1,6 +1,7 @@
 import os
+from typing import Any, cast
+
 import httpx
-from typing import Any
 
 try:
     from openai import AsyncAzureOpenAI
@@ -11,6 +12,7 @@ except ImportError:
     )
 
 from llmify.providers.openai_compatible import OpenAICompatible
+from llmify.retries import RetryCallback
 
 
 class ChatAzureOpenAI(OpenAICompatible):
@@ -30,6 +32,7 @@ class ChatAzureOpenAI(OpenAICompatible):
         response_format: dict | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -44,6 +47,7 @@ class ChatAzureOpenAI(OpenAICompatible):
             response_format=response_format,
             timeout=timeout,
             max_retries=max_retries,
+            on_retry=on_retry,
             **kwargs,
         )
         if api_key is None:
@@ -53,8 +57,8 @@ class ChatAzureOpenAI(OpenAICompatible):
 
         self._client = AsyncAzureOpenAI(
             api_key=api_key,
-            azure_endpoint=azure_endpoint,
+            azure_endpoint=cast(str, azure_endpoint),
             api_version=api_version,
             timeout=timeout,
-            max_retries=max_retries,
+            max_retries=0,
         )

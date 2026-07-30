@@ -13,7 +13,7 @@ class TestChatCerebras:
             api_key="test-key",
             base_url="https://api.cerebras.ai/v1",
             timeout=60.0,
-            max_retries=2,
+            max_retries=0,
             default_headers=None,
         )
 

@@ -55,6 +55,7 @@ from llmify.messages import (
     ToolResultMessage,
     UserMessage,
 )
+from llmify.retries import RetryCallback, retry_call, retry_stream
 from llmify.tools import Tool
 from llmify.views import (
     ChatInvokeCompletion,
@@ -97,7 +98,9 @@ def _map_anthropic_error(exc: Exception) -> Exception:
         return AuthenticationError(str(exc))
     if isinstance(exc, (_AnthropicConnectionError, _AnthropicTimeoutError)):
         return RetryableError(str(exc))
-    if isinstance(exc, _AnthropicStatusError) and exc.status_code >= 500:
+    if isinstance(exc, _AnthropicStatusError) and (
+        exc.status_code in {408, 409} or exc.status_code >= 500
+    ):
         return RetryableError(str(exc), status_code=exc.status_code)
     return exc
 
@@ -294,6 +297,7 @@ class ChatAnthropic(ChatModel):
         response_format: dict | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
+        on_retry: RetryCallback | None = None,
         default_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ):
@@ -309,6 +313,7 @@ class ChatAnthropic(ChatModel):
             response_format=response_format,
             timeout=timeout,
             max_retries=max_retries,
+            on_retry=on_retry,
             **kwargs,
         )
         if api_key is None:
@@ -317,7 +322,7 @@ class ChatAnthropic(ChatModel):
         self._client = AsyncAnthropic(
             api_key=api_key,
             timeout=timeout,
-            max_retries=max_retries,
+            max_retries=0,
             default_headers=default_headers or {},
         )
 
@@ -337,9 +342,10 @@ class ChatAnthropic(ChatModel):
         output_format: type[T] | None = None,
         tools: list[Tool | dict] | None = None,
         tool_choice: Literal["auto", "required", "none"] = "auto",
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
-        try:
+        async def invoke_once() -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
             params = _build_params(self._model, messages, self._merge_params(kwargs))
 
             if output_format is not None:
@@ -349,11 +355,13 @@ class ChatAnthropic(ChatModel):
                 return await self._invoke_with_tools(params, tools, tool_choice)
 
             return await self._invoke_plain(params)
-        except Exception as exc:
-            mapped = _map_anthropic_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise
+
+        return await retry_call(
+            invoke_once,
+            max_retries=self._default_max_retries,
+            on_retry=on_retry if on_retry is not None else self._on_retry,
+            map_error=_map_anthropic_error,
+        )
 
     async def _invoke_plain(self, params: dict[str, Any]) -> ChatInvokeCompletion[str]:
         response: AnthropicMessage = await self._client.messages.create(**params)
@@ -428,6 +436,7 @@ class ChatAnthropic(ChatModel):
         messages: list[Message],
         tools: list[Tool | dict] | None = None,
         tool_choice: Literal["auto", "required", "none"] = "auto",
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         params = _build_params(self._model, messages, self._merge_params(kwargs))
@@ -441,6 +450,15 @@ class ChatAnthropic(ChatModel):
                 "none": {"type": "none"},
             }[tool_choice]
 
+        async for event in retry_stream(
+            lambda: self._stream_once(params),
+            max_retries=self._default_max_retries,
+            on_retry=on_retry if on_retry is not None else self._on_retry,
+            map_error=_map_anthropic_error,
+        ):
+            yield event
+
+    async def _stream_once(self, params: dict[str, Any]) -> AsyncIterator[StreamEvent]:
         blocks: dict[int, dict[str, str]] = {}
         text_acc: list[str] = []
         stop_reason: str | None = None
@@ -450,62 +468,54 @@ class ChatAnthropic(ChatModel):
         cache_creation_tokens: int | None = None
         saw_usage = False
 
-        try:
-            async with self._client.messages.stream(**params) as stream:
-                async for event in stream:
-                    if event.type == "message_start":
-                        usage = event.message.usage
-                        saw_usage = True
-                        input_tokens = usage.input_tokens
-                        cache_read_tokens = usage.cache_read_input_tokens
-                        cache_creation_tokens = usage.cache_creation_input_tokens
+        async with self._client.messages.stream(**params) as stream:
+            async for event in stream:
+                if event.type == "message_start":
+                    usage = event.message.usage
+                    saw_usage = True
+                    input_tokens = usage.input_tokens
+                    cache_read_tokens = usage.cache_read_input_tokens
+                    cache_creation_tokens = usage.cache_creation_input_tokens
 
-                    elif event.type == "content_block_start":
-                        content_block = event.content_block
-                        if content_block.type == "tool_use":
-                            blocks[event.index] = {
-                                "type": "tool_use",
-                                "id": content_block.id,
-                                "name": content_block.name,
-                                "json": "",
-                            }
-                        elif content_block.type == "text":
-                            blocks[event.index] = {"type": "text"}
+                elif event.type == "content_block_start":
+                    content_block = event.content_block
+                    if content_block.type == "tool_use":
+                        blocks[event.index] = {
+                            "type": "tool_use",
+                            "id": content_block.id,
+                            "name": content_block.name,
+                            "json": "",
+                        }
+                    elif content_block.type == "text":
+                        blocks[event.index] = {"type": "text"}
 
-                    elif event.type == "content_block_delta":
-                        delta = event.delta
-                        if delta.type == "text_delta":
-                            text_acc.append(delta.text)
-                            yield StreamTextDelta(delta=delta.text)
-                        elif delta.type == "input_json_delta":
-                            block = blocks.get(event.index)
-                            if block and block.get("type") == "tool_use":
-                                block["json"] = (
-                                    block.get("json", "") + delta.partial_json
-                                )
-
-                    elif event.type == "content_block_stop":
+                elif event.type == "content_block_delta":
+                    delta = event.delta
+                    if delta.type == "text_delta":
+                        text_acc.append(delta.text)
+                        yield StreamTextDelta(delta=delta.text)
+                    elif delta.type == "input_json_delta":
                         block = blocks.get(event.index)
                         if block and block.get("type") == "tool_use":
-                            yield StreamToolCall(
-                                tool_call=ToolCall(
-                                    id=block["id"],
-                                    function=Function(
-                                        name=block["name"],
-                                        arguments=block.get("json") or "{}",
-                                    ),
-                                )
-                            )
+                            block["json"] = block.get("json", "") + delta.partial_json
 
-                    elif event.type == "message_delta":
-                        stop_reason = event.delta.stop_reason or stop_reason
-                        saw_usage = True
-                        output_tokens = event.usage.output_tokens
-        except Exception as exc:
-            mapped = _map_anthropic_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise
+                elif event.type == "content_block_stop":
+                    block = blocks.get(event.index)
+                    if block and block.get("type") == "tool_use":
+                        yield StreamToolCall(
+                            tool_call=ToolCall(
+                                id=block["id"],
+                                function=Function(
+                                    name=block["name"],
+                                    arguments=block.get("json") or "{}",
+                                ),
+                            )
+                        )
+
+                elif event.type == "message_delta":
+                    stop_reason = event.delta.stop_reason or stop_reason
+                    saw_usage = True
+                    output_tokens = event.usage.output_tokens
 
         usage_view: ChatInvokeUsage | None = None
         if saw_usage:

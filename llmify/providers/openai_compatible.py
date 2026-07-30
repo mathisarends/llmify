@@ -33,12 +33,13 @@ from llmify.messages import (
     UserMessage,
 )
 from llmify.providers._openai_utils import (
-    openai_errors,
+    map_openai_error,
     parse_usage,
     reject_stream_parameter,
     tool_call,
     tool_schemas,
 )
+from llmify.retries import RetryCallback, retry_call, retry_stream
 from llmify.tools import Tool
 from llmify.views import (
     ChatInvokeCompletion,
@@ -173,10 +174,12 @@ class OpenAICompatible(ChatModel):
         output_format: type[T] | None = None,
         tools: list[Tool | dict] | None = None,
         tool_choice: Literal["auto", "required", "none"] = "auto",
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
         reject_stream_parameter(kwargs)
-        with openai_errors():
+
+        async def invoke_once() -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
             params = self._merge_params(kwargs)
             converted_messages = _convert_messages(messages)
 
@@ -191,6 +194,13 @@ class OpenAICompatible(ChatModel):
                 )
 
             return await self._invoke_plain(converted_messages, params)
+
+        return await retry_call(
+            invoke_once,
+            max_retries=self._default_max_retries,
+            on_retry=on_retry if on_retry is not None else self._on_retry,
+            map_error=map_openai_error,
+        )
 
     async def _invoke_with_structured_output[T: BaseModel](
         self,
@@ -259,6 +269,7 @@ class OpenAICompatible(ChatModel):
         messages: list[Message],
         tools: list[Tool | dict] | None = None,
         tool_choice: Literal["auto", "required", "none"] = "auto",
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         reject_stream_parameter(kwargs)
@@ -282,59 +293,67 @@ class OpenAICompatible(ChatModel):
             request_args["tools"] = openai_tools
             request_args["tool_choice"] = tool_choice
 
-        with openai_errors():
-            stream = await self._client.chat.completions.create(**request_args)
+        async for event in retry_stream(
+            lambda: self._stream_once(request_args),
+            max_retries=self._default_max_retries,
+            on_retry=on_retry if on_retry is not None else self._on_retry,
+            map_error=map_openai_error,
+        ):
+            yield event
 
+    async def _stream_once(
+        self, request_args: dict[str, Any]
+    ) -> AsyncIterator[StreamEvent]:
+        stream = await self._client.chat.completions.create(**request_args)
         buffers: dict[int, dict[str, Any]] = {}
         text_acc: list[str] = []
         stop_reason: str | None = None
         usage: ChatInvokeUsage | None = None
 
-        with openai_errors():
-            chunk: ChatCompletionChunk
-            async for chunk in stream:
-                if chunk.usage is not None:
-                    usage = parse_usage(chunk.usage)
+        chunk: ChatCompletionChunk
+        async for chunk in stream:
+            if chunk.usage is not None:
+                usage = parse_usage(chunk.usage)
 
-                if not chunk.choices:
-                    continue
+            if not chunk.choices:
+                continue
 
-                choice = chunk.choices[0]
-                delta = choice.delta
+            choice = chunk.choices[0]
+            delta = choice.delta
 
-                if delta.content:
-                    text_acc.append(delta.content)
-                    yield StreamTextDelta(delta=delta.content)
+            if delta.content:
+                text_acc.append(delta.content)
+                yield StreamTextDelta(delta=delta.content)
 
-                for tc_delta in delta.tool_calls or []:
-                    buf = buffers.setdefault(
-                        tc_delta.index,
-                        {"id": "", "name": "", "arguments": "", "emitted": False},
-                    )
-                    if tc_delta.id:
-                        buf["id"] = tc_delta.id
+            for tc_delta in delta.tool_calls or []:
+                buf = buffers.setdefault(
+                    tc_delta.index,
+                    {"id": "", "name": "", "arguments": "", "emitted": False},
+                )
+                if tc_delta.id:
+                    buf["id"] = tc_delta.id
 
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            buf["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            buf["arguments"] += tc_delta.function.arguments
+                if tc_delta.function:
+                    if tc_delta.function.name:
+                        buf["name"] = tc_delta.function.name
+                    if tc_delta.function.arguments:
+                        buf["arguments"] += tc_delta.function.arguments
 
-                if choice.finish_reason:
-                    stop_reason = choice.finish_reason
-                    for idx in sorted(buffers):
-                        buf = buffers[idx]
-                        if buf["emitted"]:
-                            continue
+            if choice.finish_reason:
+                stop_reason = choice.finish_reason
+                for idx in sorted(buffers):
+                    buf = buffers[idx]
+                    if buf["emitted"]:
+                        continue
 
-                        buf["emitted"] = True
-                        yield StreamToolCall(
-                            tool_call=tool_call(
-                                call_id=buf["id"],
-                                name=buf["name"],
-                                arguments=buf["arguments"],
-                            )
+                    buf["emitted"] = True
+                    yield StreamToolCall(
+                        tool_call=tool_call(
+                            call_id=buf["id"],
+                            name=buf["name"],
+                            arguments=buf["arguments"],
                         )
+                    )
 
         yield StreamEnd(
             stop_reason=stop_reason,

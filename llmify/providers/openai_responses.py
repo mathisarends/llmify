@@ -1,11 +1,11 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, Literal, Never, overload
+from typing import Any, Literal, overload
 
 import httpx
 from pydantic import BaseModel
 
 try:
-    from openai import AsyncOpenAI, OpenAIError
+    from openai import AsyncOpenAI
     from openai.types.responses import (
         Response,
         ResponseCompletedEvent,
@@ -43,7 +43,7 @@ from llmify.providers._openai_utils import (
     tool_call,
     tool_schemas,
 )
-from llmify.retries import RetryCallback, sleep_before_retry
+from llmify.retries import RetryCallback, retry_call, retry_stream
 from llmify.tools import Tool
 from llmify.views import (
     ChatInvokeCompletion,
@@ -65,12 +65,6 @@ Not every model supports every level — `xhigh` is limited to the newest
 reasoning models, and `none`/`minimal` are rejected by some. The API reports an
 unsupported level as a request error.
 """
-
-
-class _RetryableStreamError(Exception):
-    def __init__(self, error: RetryableError):
-        super().__init__(str(error))
-        self.error = error
 
 
 class ChatOpenAIResponses(ChatModel):
@@ -101,12 +95,12 @@ class ChatOpenAIResponses(ChatModel):
             top_p=top_p,
             timeout=timeout,
             max_retries=max_retries,
+            on_retry=on_retry,
             **kwargs,
         )
         api_key = resolve_api_key(api_key, "OPENAI_API_KEY", "OpenAI")
 
         self._store = store
-        self._on_retry = on_retry
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -203,30 +197,25 @@ class ChatOpenAIResponses(ChatModel):
         text: dict[str, Any] | None,
         on_retry: RetryCallback | None,
     ) -> StreamEnd:
-        for retry_number in range(self._default_max_retries + 1):
+        async def collect_once() -> StreamEnd:
             end = StreamEnd()
-            try:
-                async for event in self._stream_once(
-                    messages,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    params=params,
-                    text=text,
-                ):
-                    if isinstance(event, StreamEnd):
-                        end = event
-                return end
-            except _RetryableStreamError as exc:
-                if retry_number == self._default_max_retries:
-                    raise exc.error from exc.__cause__
-                await sleep_before_retry(
-                    exc.error,
-                    retry_number,
-                    self._default_max_retries,
-                    on_retry,
-                )
+            async for event in self._stream_once(
+                messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                params=params,
+                text=text,
+            ):
+                if isinstance(event, StreamEnd):
+                    end = event
+            return end
 
-        raise RuntimeError("Retry loop exhausted without returning or raising.")
+        return await retry_call(
+            collect_once,
+            max_retries=self._default_max_retries,
+            on_retry=on_retry,
+            map_error=map_openai_error,
+        )
 
     async def _stream(
         self,
@@ -237,28 +226,19 @@ class ChatOpenAIResponses(ChatModel):
         text: dict[str, Any] | None = None,
         on_retry: RetryCallback | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        for retry_number in range(self._default_max_retries + 1):
-            emitted = False
-            try:
-                async for event in self._stream_once(
-                    messages,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    params=params,
-                    text=text,
-                ):
-                    emitted = True
-                    yield event
-                return
-            except _RetryableStreamError as exc:
-                if emitted or retry_number == self._default_max_retries:
-                    raise exc.error from exc.__cause__
-                await sleep_before_retry(
-                    exc.error,
-                    retry_number,
-                    self._default_max_retries,
-                    on_retry,
-                )
+        async for event in retry_stream(
+            lambda: self._stream_once(
+                messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                params=params,
+                text=text,
+            ),
+            max_retries=self._default_max_retries,
+            on_retry=on_retry,
+            map_error=map_openai_error,
+        ):
+            yield event
 
     async def _stream_once(
         self,
@@ -285,38 +265,30 @@ class ChatOpenAIResponses(ChatModel):
             request["tools"] = _convert_tools(tools)
             request["tool_choice"] = tool_choice
 
-        try:
-            stream = await self._client.responses.create(**request)
-        except OpenAIError as exc:
-            _raise_stream_error(exc)
+        stream = await self._client.responses.create(**request)
 
         text_acc: list[str] = []
         tool_calls: list[ToolCall] = []
         usage: ChatInvokeUsage | None = None
         stop_reason: str | None = None
 
-        try:
-            async for event in stream:
-                if isinstance(event, ResponseTextDeltaEvent):
-                    text_acc.append(event.delta)
-                    yield StreamTextDelta(delta=event.delta)
+        async for event in stream:
+            if isinstance(event, ResponseTextDeltaEvent):
+                text_acc.append(event.delta)
+                yield StreamTextDelta(delta=event.delta)
 
-                elif isinstance(event, ResponseOutputItemDoneEvent):
-                    tool_call = _parse_function_call(event.item)
-                    if tool_call is not None:
-                        tool_calls.append(tool_call)
-                        yield StreamToolCall(tool_call=tool_call)
+            elif isinstance(event, ResponseOutputItemDoneEvent):
+                tool_call = _parse_function_call(event.item)
+                if tool_call is not None:
+                    tool_calls.append(tool_call)
+                    yield StreamToolCall(tool_call=tool_call)
 
-                elif isinstance(
-                    event, (ResponseCompletedEvent, ResponseIncompleteEvent)
-                ):
-                    usage = parse_usage(event.response.usage)
-                    stop_reason = _parse_stop_reason(event.response, tool_calls)
+            elif isinstance(event, (ResponseCompletedEvent, ResponseIncompleteEvent)):
+                usage = parse_usage(event.response.usage)
+                stop_reason = _parse_stop_reason(event.response, tool_calls)
 
-                elif isinstance(event, (ResponseFailedEvent, ResponseErrorEvent)):
-                    raise _event_error(event)
-        except (LLMifyError, OpenAIError) as exc:
-            _raise_stream_error(exc)
+            elif isinstance(event, (ResponseFailedEvent, ResponseErrorEvent)):
+                raise _event_error(event)
 
         yield StreamEnd(
             stop_reason=stop_reason,
@@ -487,12 +459,3 @@ def _event_error(
     if code in {"server_error", "vector_store_timeout"}:
         return RetryableError(message)
     return LLMifyError(message)
-
-
-def _raise_stream_error(exc: Exception) -> Never:
-    mapped = map_openai_error(exc)
-    if isinstance(mapped, RetryableError):
-        raise _RetryableStreamError(mapped) from exc
-    if mapped is not exc:
-        raise mapped from exc
-    raise exc

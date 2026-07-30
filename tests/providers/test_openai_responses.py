@@ -30,7 +30,6 @@ from llmify.messages import (
     ToolResultMessage,
     UserMessage,
 )
-from llmify.providers import openai_responses as responses_provider
 from llmify.providers.openai_responses import _convert_messages, _convert_tools
 from llmify.tools import FunctionTool
 from llmify.views import StreamEnd, StreamTextDelta, StreamToolCall
@@ -225,7 +224,7 @@ class TestInvoke:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         sleeper = AsyncMock()
-        monkeypatch.setattr(responses_provider, "sleep_before_retry", sleeper)
+        monkeypatch.setattr(retries_provider, "sleep_before_retry", sleeper)
         model = ChatOpenAIResponses(model="gpt-test", max_retries=2)
         model._client.responses.create = AsyncMock(
             side_effect=[
@@ -429,7 +428,7 @@ class TestInvoke:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         sleeper = AsyncMock()
-        monkeypatch.setattr(responses_provider, "sleep_before_retry", sleeper)
+        monkeypatch.setattr(retries_provider, "sleep_before_retry", sleeper)
         model = ChatOpenAIResponses(model="gpt-test", max_retries=2)
         model._client.responses.create = AsyncMock(
             side_effect=[

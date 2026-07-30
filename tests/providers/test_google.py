@@ -1,15 +1,22 @@
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 pytest.importorskip("google.genai")
 
-from google.genai import types
+from google.genai import errors, types
 
 from llmify import AssistantMessage, ToolResultMessage
+from llmify import retries as retries_provider
+from llmify.base import ChatModel
 from llmify.messages import Function, ToolCall
 from llmify.providers.google import (
+    ChatGoogle,
     _convert_messages,
+    _map_google_error,
     _parse_text,
     _parse_tool_calls,
     _parse_usage,
@@ -228,3 +235,63 @@ class TestGoogleResponseParsing:
         )
 
         assert _stop_reason(response) == "STOP"
+
+
+class TestGoogleRetries:
+    @staticmethod
+    def _model(**kwargs) -> ChatGoogle:
+        model = object.__new__(ChatGoogle)
+        ChatModel.__init__(model, model="gemini-test", **kwargs)
+        model._client = SimpleNamespace(models=SimpleNamespace())
+        return model
+
+    def test_disables_sdk_retries(self) -> None:
+        with patch("llmify.providers.google.genai.Client") as client:
+            ChatGoogle(api_key="test-key", max_retries=4)
+
+        http_options = client.call_args.kwargs["http_options"]
+        assert http_options.retry_options.attempts == 1
+
+    def test_maps_retry_after_header(self) -> None:
+        response = httpx.Response(
+            status_code=429,
+            headers={"retry-after": "2.5"},
+            request=httpx.Request("POST", "https://generativelanguage.googleapis.com"),
+        )
+        mapped = _map_google_error(
+            errors.APIError(
+                429,
+                {"message": "rate limited"},
+                response=response,
+            )
+        )
+
+        assert mapped.retry_after == 2.5
+
+    @pytest.mark.asyncio
+    async def test_retries_invoke_and_calls_the_hook(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        callback = AsyncMock()
+        monkeypatch.setattr(retries_provider.asyncio, "sleep", AsyncMock())
+        model = self._model(max_retries=1, on_retry=callback)
+        response = types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(parts=[types.Part(text="done")]),
+                    finish_reason="STOP",
+                )
+            ]
+        )
+        model._client.models.generate_content = AsyncMock(
+            side_effect=[
+                errors.APIError(503, {"message": "unavailable"}),
+                response,
+            ]
+        )
+
+        result = await model.invoke([])
+
+        assert result.completion == "done"
+        assert model._client.models.generate_content.await_count == 2
+        callback.assert_awaited_once()

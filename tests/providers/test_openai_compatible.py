@@ -13,6 +13,8 @@ from openai.types.chat.chat_completion_message_function_tool_call import (
 from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 from pydantic import BaseModel
 
+from llmify import retries as retries_provider
+from llmify.exceptions import RetryableError
 from llmify.messages import (
     AssistantMessage,
     ContentPartImageParam,
@@ -30,6 +32,7 @@ from llmify.providers.openai_compatible import (
     _convert_message,
     _convert_messages,
 )
+from llmify.retries import RetryEvent
 from llmify.tools import FunctionTool
 from llmify.views import StreamEnd, StreamTextDelta, StreamToolCall
 
@@ -250,6 +253,54 @@ class TestPlainInvoke:
         assert call_kwargs["max_tokens"] == 50
 
 
+class TestRetries:
+    @staticmethod
+    def _response(content: str = "done") -> Mock:
+        response = Mock(spec=ChatCompletion)
+        response.choices = [Mock(message=Mock(content=content), finish_reason="stop")]
+        response.usage = None
+        return response
+
+    @pytest.mark.asyncio
+    async def test_retries_invoke_and_reports_the_retry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        events: list[RetryEvent] = []
+        monkeypatch.setattr(retries_provider.asyncio, "sleep", AsyncMock())
+        model = MockChatModel(max_retries=1, on_retry=events.append)
+        model._client.chat.completions.create = AsyncMock(
+            side_effect=[RetryableError("transient"), self._response()]
+        )
+
+        result = await model.invoke([UserMessage(content="Hi")])
+
+        assert result.completion == "done"
+        assert model._client.chat.completions.create.await_count == 2
+        assert len(events) == 1
+        assert events[0].retry_number == 1
+        assert str(events[0].error) == "transient"
+
+    @pytest.mark.asyncio
+    async def test_per_call_callback_overrides_the_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        default_callback = AsyncMock()
+        call_callback = AsyncMock()
+        monkeypatch.setattr(retries_provider.asyncio, "sleep", AsyncMock())
+        model = MockChatModel(max_retries=1, on_retry=default_callback)
+        model._client.chat.completions.create = AsyncMock(
+            side_effect=[RetryableError("transient"), self._response()]
+        )
+
+        await model.invoke(
+            [UserMessage(content="Hi")],
+            on_retry=call_callback,
+        )
+
+        call_callback.assert_awaited_once()
+        default_callback.assert_not_called()
+
+
 class TestToolInvoke:
     @pytest.mark.asyncio
     async def test_returns_completion_with_tool_calls(
@@ -411,6 +462,45 @@ class TestStreaming:
         assert events[2].completion == "Hello world"
         assert events[2].usage is not None
         assert events[2].usage.total_tokens == 14
+
+    @pytest.mark.asyncio
+    async def test_retries_before_the_first_emitted_event(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        callback = AsyncMock()
+        monkeypatch.setattr(retries_provider.asyncio, "sleep", AsyncMock())
+        model = MockChatModel(max_retries=1, on_retry=callback)
+
+        async def successful_stream():
+            yield self._make_chunk(content="Hello", finish_reason="stop")
+
+        model._client.chat.completions.create = AsyncMock(
+            side_effect=[RetryableError("transient"), successful_stream()]
+        )
+
+        events = [event async for event in model.stream([UserMessage(content="Hi")])]
+
+        assert events[0] == StreamTextDelta(delta="Hello")
+        assert model._client.chat.completions.create.await_count == 2
+        callback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_after_emitting_output(self) -> None:
+        model = MockChatModel(max_retries=2)
+
+        async def failing_stream():
+            yield self._make_chunk(content="partial")
+            raise RetryableError("stream interrupted")
+
+        model._client.chat.completions.create = AsyncMock(return_value=failing_stream())
+        events = []
+
+        with pytest.raises(RetryableError, match="stream interrupted"):
+            async for event in model.stream([UserMessage(content="Hi")]):
+                events.append(event)
+
+        assert events == [StreamTextDelta(delta="partial")]
+        assert model._client.chat.completions.create.await_count == 1
 
     @pytest.mark.asyncio
     async def test_buffers_tool_calls_until_finish(

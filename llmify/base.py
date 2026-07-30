@@ -6,6 +6,7 @@ import httpx
 from pydantic import BaseModel
 
 from llmify.messages import Message
+from llmify.retries import RetryCallback
 from llmify.tools import Tool
 from llmify.views import ChatInvokeCompletion, StreamEvent
 
@@ -24,6 +25,7 @@ class ChatModel(ABC):
         response_format: dict | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
+        on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ):
         if not isinstance(max_retries, int) or isinstance(max_retries, bool):
@@ -42,6 +44,7 @@ class ChatModel(ABC):
         self._default_response_format = response_format
         self._default_timeout = timeout
         self._default_max_retries = max_retries
+        self._on_retry = on_retry
         self._default_kwargs = kwargs
 
     @property

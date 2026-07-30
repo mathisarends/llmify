@@ -14,6 +14,7 @@ except ImportError:
 
 from llmify.providers._openai_utils import resolve_api_key
 from llmify.providers.openai_compatible import OpenAICompatible
+from llmify.retries import RetryCallback
 
 
 class OpenAIModel(StrEnum):
@@ -48,6 +49,7 @@ class ChatOpenAI(OpenAICompatible):
         response_format: dict | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
+        on_retry: RetryCallback | None = None,
         default_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ):
@@ -63,6 +65,7 @@ class ChatOpenAI(OpenAICompatible):
             response_format=response_format,
             timeout=timeout,
             max_retries=max_retries,
+            on_retry=on_retry,
             **kwargs,
         )
         api_key = resolve_api_key(api_key, "OPENAI_API_KEY", "OpenAI")
@@ -71,6 +74,6 @@ class ChatOpenAI(OpenAICompatible):
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,
-            max_retries=max_retries,
+            max_retries=0,
             default_headers=default_headers,
         )

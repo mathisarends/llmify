@@ -13,14 +13,18 @@ from anthropic import (
     RateLimitError,
 )
 
+from llmify import retries as retries_provider
 from llmify.base import ChatModel
-from llmify.exceptions import OutOfCreditsError
 from llmify.exceptions import AuthenticationError as LLMAuthenticationError
-from llmify.exceptions import ContextLengthExceededError
+from llmify.exceptions import (
+    ContextLengthExceededError,
+    OutOfCreditsError,
+    RetryableError,
+)
 from llmify.exceptions import RateLimitError as LLMRateLimitError
-from llmify.exceptions import RetryableError
 from llmify.messages import UserMessage
 from llmify.providers.anthropic import ChatAnthropic, _map_anthropic_error
+from llmify.views import ChatInvokeCompletion
 
 
 # ---------------------------------------------------------------------------
@@ -57,8 +61,9 @@ def _timeout_error() -> APITimeoutError:
 
 
 class MockAnthropicModel(ChatAnthropic):
-    def __init__(self):
-        ChatModel.__init__(self, model="claude-test")
+    def __init__(self, **kwargs):
+        kwargs.setdefault("max_retries", 0)
+        ChatModel.__init__(self, model="claude-test", **kwargs)
         self._client = SimpleNamespace(messages=SimpleNamespace())
 
 
@@ -167,6 +172,24 @@ class FakeAsyncContext:
 
 
 class TestInvokeErrorMapping:
+    @pytest.mark.asyncio
+    async def test_retries_and_calls_the_hook(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        callback = AsyncMock()
+        monkeypatch.setattr(retries_provider.asyncio, "sleep", AsyncMock())
+        model = MockAnthropicModel(max_retries=1, on_retry=callback)
+        expected = ChatInvokeCompletion(completion="done")
+        model._invoke_plain = AsyncMock(
+            side_effect=[RetryableError("transient"), expected]
+        )
+
+        result = await model.invoke([UserMessage(content="hi")])
+
+        assert result is expected
+        assert model._invoke_plain.await_count == 2
+        callback.assert_awaited_once()
+
     @pytest.mark.asyncio
     async def test_invoke_raises_rate_limit_error(self) -> None:
         model = MockAnthropicModel()

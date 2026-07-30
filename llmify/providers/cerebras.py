@@ -13,6 +13,7 @@ except ImportError:
     )
 
 from llmify.providers.openai_compatible import OpenAICompatible
+from llmify.retries import RetryCallback
 
 
 class CerebrasModel(StrEnum):
@@ -36,6 +37,7 @@ class ChatCerebras(OpenAICompatible):
         response_format: dict[str, Any] | None = None,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
+        on_retry: RetryCallback | None = None,
         default_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ):
@@ -51,6 +53,7 @@ class ChatCerebras(OpenAICompatible):
             response_format=response_format,
             timeout=timeout,
             max_retries=max_retries,
+            on_retry=on_retry,
             **kwargs,
         )
         if api_key is None:
@@ -60,6 +63,6 @@ class ChatCerebras(OpenAICompatible):
             api_key=api_key,
             base_url="https://api.cerebras.ai/v1",
             timeout=timeout,
-            max_retries=max_retries,
+            max_retries=0,
             default_headers=default_headers,
         )

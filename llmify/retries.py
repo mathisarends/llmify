@@ -1,8 +1,9 @@
 import asyncio
 import inspect
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from typing import Never
 
 from llmify.exceptions import RateLimitError, RetryableError
 
@@ -28,6 +29,7 @@ class RetryEvent:
 
 
 type RetryCallback = Callable[[RetryEvent], Awaitable[None] | None]
+type ErrorMapper = Callable[[Exception], Exception]
 
 
 def retry_delay(error: RetryableError, retry_number: int) -> float:
@@ -58,3 +60,55 @@ async def sleep_before_retry(
             await result
 
     await asyncio.sleep(delay)
+
+
+async def retry_call[T](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    max_retries: int,
+    on_retry: RetryCallback | None = None,
+    map_error: ErrorMapper | None = None,
+) -> T:
+    """Run an idempotent operation, retrying mapped transient failures."""
+    for retry_number in range(max_retries + 1):
+        try:
+            return await operation()
+        except Exception as exc:  # noqa: BLE001 - provider SDK errors vary
+            error = map_error(exc) if map_error is not None else exc
+            if not isinstance(error, RetryableError):
+                _raise_mapped(error, exc)
+            if retry_number == max_retries:
+                _raise_mapped(error, exc)
+            await sleep_before_retry(error, retry_number, max_retries, on_retry)
+
+    raise RuntimeError("Retry loop exhausted without returning or raising.")
+
+
+async def retry_stream[T](
+    stream_factory: Callable[[], AsyncIterator[T]],
+    *,
+    max_retries: int,
+    on_retry: RetryCallback | None = None,
+    map_error: ErrorMapper | None = None,
+) -> AsyncIterator[T]:
+    """Retry a stream only while doing so cannot replay already emitted output."""
+    for retry_number in range(max_retries + 1):
+        emitted = False
+        try:
+            async for event in stream_factory():
+                emitted = True
+                yield event
+            return
+        except Exception as exc:  # noqa: BLE001 - provider SDK errors vary
+            error = map_error(exc) if map_error is not None else exc
+            if not isinstance(error, RetryableError):
+                _raise_mapped(error, exc)
+            if emitted or retry_number == max_retries:
+                _raise_mapped(error, exc)
+            await sleep_before_retry(error, retry_number, max_retries, on_retry)
+
+
+def _raise_mapped(error: Exception, original: Exception) -> Never:
+    if error is original:
+        raise error
+    raise error from original

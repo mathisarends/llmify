@@ -389,9 +389,11 @@ Supported parameters: `temperature`, `max_tokens`, `top_p`, `frequency_penalty`,
 
 ### Retries
 
-OpenAI and Anthropic clients retry transient connection, timeout, rate-limit,
-and server errors automatically. `max_retries` is the number of additional
-attempts after the initial request and defaults to `2`:
+All bundled providers retry transient connection, timeout, rate-limit, and
+server errors through the same llmify retry layer. This includes OpenAI Chat
+Completions and Responses, Azure OpenAI, Cerebras, Anthropic, Google, Codex,
+and custom `OpenAICompatible` providers. `max_retries` is the number of
+additional attempts after the initial request and defaults to `2`:
 
 ```python
 llm = ChatOpenAIResponses(
@@ -400,16 +402,15 @@ llm = ChatOpenAIResponses(
 )
 ```
 
-Responses API calls also recover from transient errors delivered after the HTTP
-stream has started. `invoke()` safely discards an incomplete attempt before
-retrying. `stream()` retries only until its first event has been emitted; after
-that it raises `RetryableError` rather than replaying duplicate output.
+`invoke()` safely discards an incomplete attempt before retrying. `stream()`
+retries only until its first event has been emitted; after that it raises
+`RetryableError` rather than replaying duplicate output.
 Rate-limit `Retry-After` headers are respected, with exponential backoff and
-jitter used for other transient stream failures. Set `max_retries=0` to disable
+jitter used for other transient failures. Set `max_retries=0` to disable
 automatic retries.
 
-`ChatOpenAIResponses` and `ChatCodex` expose every scheduled retry through a
-sync or async `on_retry` callback:
+Every provider exposes each scheduled retry through a sync or async `on_retry`
+callback:
 
 ```python
 from llmify import RetryEvent
