@@ -67,51 +67,6 @@ from llmify.views import (
 )
 
 
-def _map_anthropic_error(exc: Exception) -> Exception:
-    if isinstance(exc, _AnthropicRateLimitError):
-        error_type = _error_details(exc.body).get("type", "")
-        if error_type == "credit_balance_too_low":
-            return OutOfCreditsError(str(exc))
-        retry_after: float | None = None
-        raw = exc.response.headers.get("retry-after")
-        if raw:
-            try:
-                retry_after = float(raw)
-            except ValueError:
-                pass
-        return RateLimitError(str(exc), retry_after=retry_after)
-    if isinstance(exc, _AnthropicStatusError) and exc.status_code == 402:
-        return OutOfCreditsError(str(exc))
-    if isinstance(exc, _AnthropicStatusError) and exc.status_code == 400:
-        message = _error_details(exc.body).get("message", "")
-        msg_lower = message.lower()
-        if (
-            "too long" in msg_lower
-            or "context" in msg_lower
-            or (
-                "token" in msg_lower
-                and any(kw in msg_lower for kw in ("exceed", "maximum", "limit"))
-            )
-        ):
-            return ContextLengthExceededError(str(exc))
-    if isinstance(exc, _AnthropicStatusError) and exc.status_code == 401:
-        return AuthenticationError(str(exc))
-    if isinstance(exc, (_AnthropicConnectionError, _AnthropicTimeoutError)):
-        return RetryableError(str(exc))
-    if isinstance(exc, _AnthropicStatusError) and (
-        exc.status_code in {408, 409} or exc.status_code >= 500
-    ):
-        return RetryableError(str(exc), status_code=exc.status_code)
-    return exc
-
-
-def _error_details(body: object | None) -> dict[str, Any]:
-    if not isinstance(body, dict):
-        return {}
-    details = body.get("error")
-    return cast(dict[str, Any], details) if isinstance(details, dict) else {}
-
-
 class AnthropicModel(StrEnum):
     CLAUDE_FABLE_5 = "claude-fable-5"
     CLAUDE_OPUS_4_8 = "claude-opus-4-8"
@@ -121,162 +76,6 @@ class AnthropicModel(StrEnum):
     CLAUDE_OPUS_4_7 = "claude-opus-4-7"
     CLAUDE_OPUS_4_6 = "claude-opus-4-6"
     CLAUDE_SONNET_4_6 = "claude-sonnet-4-6"
-
-
-def _build_params(
-    model: str, messages: list[Message], merged: dict[str, Any]
-) -> dict[str, Any]:
-    system_text, converted = _convert_messages(messages)
-
-    params: dict[str, Any] = {
-        "model": model,
-        "messages": converted,
-        "max_tokens": merged.pop("max_tokens", 4096) or 4096,
-    }
-
-    if system_text:
-        params["system"] = system_text
-
-    if "temperature" in merged:
-        params["temperature"] = merged.pop("temperature")
-    if "top_p" in merged:
-        params["top_p"] = merged.pop("top_p")
-    if "stop" in merged:
-        stop = merged.pop("stop")
-        params["stop_sequences"] = [stop] if isinstance(stop, str) else stop
-
-    # Remove OpenAI-specific params that Anthropic doesn't support.
-    merged.pop("frequency_penalty", None)
-    merged.pop("presence_penalty", None)
-    merged.pop("seed", None)
-    merged.pop("response_format", None)
-
-    params.update(merged)
-    return params
-
-
-def _extract_text(response: AnthropicMessage) -> str:
-    return "".join(block.text for block in response.content if block.type == "text")
-
-
-def _parse_usage(usage: AnthropicUsage) -> ChatInvokeUsage:
-    return ChatInvokeUsage(
-        prompt_tokens=usage.input_tokens,
-        completion_tokens=usage.output_tokens,
-        total_tokens=usage.input_tokens + usage.output_tokens,
-        prompt_cached_tokens=usage.cache_read_input_tokens,
-        prompt_cache_creation_tokens=usage.cache_creation_input_tokens,
-    )
-
-
-def _parse_tool_calls(response: AnthropicMessage) -> list[ToolCall]:
-    return [
-        ToolCall(
-            id=block.id,
-            function=Function(
-                name=block.name,
-                arguments=json.dumps(block.input),
-            ),
-        )
-        for block in response.content
-        if block.type == "tool_use"
-    ]
-
-
-def _convert_tool(tool: Tool) -> dict[str, Any]:
-    openai_schema = tool.to_openai_schema()
-    function = openai_schema.get("function", openai_schema)
-    return {
-        "name": function["name"],
-        "description": function.get("description", ""),
-        "input_schema": function.get("parameters", {}),
-    }
-
-
-def _convert_tools(tools: list[Tool | dict]) -> list[ToolUnionParam]:
-    return [
-        cast(ToolUnionParam, tool if isinstance(tool, dict) else _convert_tool(tool))
-        for tool in tools
-    ]
-
-
-def _convert_messages(
-    messages: list[Message],
-) -> tuple[str | None, list[dict[str, Any]]]:
-    system_text: str | None = None
-    converted: list[dict[str, Any]] = []
-
-    for message in messages:
-        if isinstance(message, SystemMessage):
-            system_text = message.text
-            continue
-
-        if isinstance(message, ToolResultMessage):
-            converted.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": message.tool_call_id,
-                            "content": message.content,
-                        }
-                    ],
-                }
-            )
-            continue
-
-        if isinstance(message, AssistantMessage) and message.tool_calls:
-            content: list[dict[str, Any]] = []
-            if message.text:
-                content.append({"type": "text", "text": message.text})
-            for tool_call in message.tool_calls:
-                content.append(
-                    {
-                        "type": "tool_use",
-                        "id": tool_call.id,
-                        "name": tool_call.function.name,
-                        "input": json.loads(tool_call.function.arguments),
-                    }
-                )
-            converted.append({"role": "assistant", "content": content})
-            continue
-
-        if isinstance(message, UserMessage) and isinstance(message.content, list):
-            content_parts: list[dict[str, Any]] = []
-            for part in message.content:
-                if isinstance(part, ContentPartTextParam):
-                    content_parts.append({"type": "text", "text": part.text})
-                elif isinstance(part, ContentPartImageParam):
-                    url = part.image_url.url
-                    if url.startswith("data:"):
-                        media_type, _, data = url.partition(";base64,")
-                        content_parts.append(
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": media_type.removeprefix("data:"),
-                                    "data": data,
-                                },
-                            }
-                        )
-                    else:
-                        content_parts.append(
-                            {
-                                "type": "image",
-                                "source": {"type": "url", "url": url},
-                            }
-                        )
-            converted.append({"role": "user", "content": content_parts})
-            continue
-
-        if isinstance(message, UserMessage):
-            converted.append({"role": "user", "content": message.text})
-        elif isinstance(message, AssistantMessage):
-            converted.append({"role": "assistant", "content": message.text})
-
-    return system_text, converted
 
 
 class ChatAnthropic(ChatModel):
@@ -543,3 +342,204 @@ class ChatAnthropic(ChatModel):
             ],
             completion="".join(text_acc),
         )
+
+
+def _map_anthropic_error(exc: Exception) -> Exception:
+    if isinstance(exc, _AnthropicRateLimitError):
+        error_type = _error_details(exc.body).get("type", "")
+        if error_type == "credit_balance_too_low":
+            return OutOfCreditsError(str(exc))
+        retry_after: float | None = None
+        raw = exc.response.headers.get("retry-after")
+        if raw:
+            try:
+                retry_after = float(raw)
+            except ValueError:
+                pass
+        return RateLimitError(str(exc), retry_after=retry_after)
+    if isinstance(exc, _AnthropicStatusError) and exc.status_code == 402:
+        return OutOfCreditsError(str(exc))
+    if isinstance(exc, _AnthropicStatusError) and exc.status_code == 400:
+        message = _error_details(exc.body).get("message", "")
+        msg_lower = message.lower()
+        if (
+            "too long" in msg_lower
+            or "context" in msg_lower
+            or (
+                "token" in msg_lower
+                and any(kw in msg_lower for kw in ("exceed", "maximum", "limit"))
+            )
+        ):
+            return ContextLengthExceededError(str(exc))
+    if isinstance(exc, _AnthropicStatusError) and exc.status_code == 401:
+        return AuthenticationError(str(exc))
+    if isinstance(exc, (_AnthropicConnectionError, _AnthropicTimeoutError)):
+        return RetryableError(str(exc))
+    if isinstance(exc, _AnthropicStatusError) and (
+        exc.status_code in {408, 409} or exc.status_code >= 500
+    ):
+        return RetryableError(str(exc), status_code=exc.status_code)
+    return exc
+
+
+def _error_details(body: object | None) -> dict[str, Any]:
+    if not isinstance(body, dict):
+        return {}
+    details = body.get("error")
+    return cast(dict[str, Any], details) if isinstance(details, dict) else {}
+
+
+def _build_params(
+    model: str, messages: list[Message], merged: dict[str, Any]
+) -> dict[str, Any]:
+    system_text, converted = _convert_messages(messages)
+
+    params: dict[str, Any] = {
+        "model": model,
+        "messages": converted,
+        "max_tokens": merged.pop("max_tokens", 4096) or 4096,
+    }
+
+    if system_text:
+        params["system"] = system_text
+
+    if "temperature" in merged:
+        params["temperature"] = merged.pop("temperature")
+    if "top_p" in merged:
+        params["top_p"] = merged.pop("top_p")
+    if "stop" in merged:
+        stop = merged.pop("stop")
+        params["stop_sequences"] = [stop] if isinstance(stop, str) else stop
+
+    # Remove OpenAI-specific params that Anthropic doesn't support.
+    merged.pop("frequency_penalty", None)
+    merged.pop("presence_penalty", None)
+    merged.pop("seed", None)
+    merged.pop("response_format", None)
+
+    params.update(merged)
+    return params
+
+
+def _convert_messages(
+    messages: list[Message],
+) -> tuple[str | None, list[dict[str, Any]]]:
+    system_text: str | None = None
+    converted: list[dict[str, Any]] = []
+
+    for message in messages:
+        if isinstance(message, SystemMessage):
+            system_text = message.text
+            continue
+
+        if isinstance(message, ToolResultMessage):
+            converted.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": message.tool_call_id,
+                            "content": message.content,
+                        }
+                    ],
+                }
+            )
+            continue
+
+        if isinstance(message, AssistantMessage) and message.tool_calls:
+            content: list[dict[str, Any]] = []
+            if message.text:
+                content.append({"type": "text", "text": message.text})
+            for tool_call in message.tool_calls:
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": tool_call.id,
+                        "name": tool_call.function.name,
+                        "input": json.loads(tool_call.function.arguments),
+                    }
+                )
+            converted.append({"role": "assistant", "content": content})
+            continue
+
+        if isinstance(message, UserMessage) and isinstance(message.content, list):
+            content_parts: list[dict[str, Any]] = []
+            for part in message.content:
+                if isinstance(part, ContentPartTextParam):
+                    content_parts.append({"type": "text", "text": part.text})
+                elif isinstance(part, ContentPartImageParam):
+                    url = part.image_url.url
+                    if url.startswith("data:"):
+                        media_type, _, data = url.partition(";base64,")
+                        content_parts.append(
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type.removeprefix("data:"),
+                                    "data": data,
+                                },
+                            }
+                        )
+                    else:
+                        content_parts.append(
+                            {
+                                "type": "image",
+                                "source": {"type": "url", "url": url},
+                            }
+                        )
+            converted.append({"role": "user", "content": content_parts})
+            continue
+
+        if isinstance(message, UserMessage):
+            converted.append({"role": "user", "content": message.text})
+        elif isinstance(message, AssistantMessage):
+            converted.append({"role": "assistant", "content": message.text})
+
+    return system_text, converted
+
+
+def _convert_tools(tools: list[Tool | dict]) -> list[ToolUnionParam]:
+    return [
+        cast(ToolUnionParam, tool if isinstance(tool, dict) else _convert_tool(tool))
+        for tool in tools
+    ]
+
+
+def _convert_tool(tool: Tool) -> dict[str, Any]:
+    openai_schema = tool.to_openai_schema()
+    function = openai_schema.get("function", openai_schema)
+    return {
+        "name": function["name"],
+        "description": function.get("description", ""),
+        "input_schema": function.get("parameters", {}),
+    }
+
+
+def _extract_text(response: AnthropicMessage) -> str:
+    return "".join(block.text for block in response.content if block.type == "text")
+
+
+def _parse_tool_calls(response: AnthropicMessage) -> list[ToolCall]:
+    return [
+        ToolCall(
+            id=block.id,
+            function=Function(
+                name=block.name,
+                arguments=json.dumps(block.input),
+            ),
+        )
+        for block in response.content
+        if block.type == "tool_use"
+    ]
+
+
+def _parse_usage(usage: AnthropicUsage) -> ChatInvokeUsage:
+    return ChatInvokeUsage(
+        prompt_tokens=usage.input_tokens,
+        completion_tokens=usage.output_tokens,
+        total_tokens=usage.input_tokens + usage.output_tokens,
+        prompt_cached_tokens=usage.cache_read_input_tokens,
+        prompt_cache_creation_tokens=usage.cache_creation_input_tokens,
+    )

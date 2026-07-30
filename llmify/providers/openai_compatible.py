@@ -51,105 +51,6 @@ from llmify.views import (
 )
 
 
-def _convert_messages(messages: list[Message]) -> list[ChatCompletionMessageParam]:
-    return [_convert_message(message) for message in messages]
-
-
-def _convert_message(message: Message) -> ChatCompletionMessageParam:
-    if isinstance(message, ToolResultMessage):
-        return cast(
-            ChatCompletionMessageParam,
-            {
-                "role": "tool",
-                "tool_call_id": message.tool_call_id,
-                "content": message.content,
-            },
-        )
-
-    if isinstance(message, AssistantMessage) and message.tool_calls:
-        return cast(
-            ChatCompletionMessageParam,
-            {
-                "role": "assistant",
-                "content": message.text or None,
-                "tool_calls": [
-                    {
-                        "id": tool_call.id,
-                        "type": "function",
-                        "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
-                        },
-                    }
-                    for tool_call in message.tool_calls
-                ],
-            },
-        )
-
-    if isinstance(message, UserMessage) and isinstance(message.content, list):
-        content = []
-        for part in message.content:
-            if isinstance(part, ContentPartTextParam):
-                content.append({"type": "text", "text": part.text})
-            elif isinstance(part, ContentPartImageParam):
-                content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": part.image_url.url,
-                            "detail": part.image_url.detail,
-                        },
-                    }
-                )
-        return cast(
-            ChatCompletionMessageParam,
-            {"role": message.role, "content": content},
-        )
-
-    if isinstance(message, SystemMessage):
-        if isinstance(message.content, list):
-            return cast(
-                ChatCompletionMessageParam,
-                {
-                    "role": message.role,
-                    "content": [
-                        {"type": "text", "text": part.text} for part in message.content
-                    ],
-                },
-            )
-        return cast(
-            ChatCompletionMessageParam,
-            {"role": message.role, "content": message.content},
-        )
-
-    if isinstance(message, UserMessage):
-        return cast(
-            ChatCompletionMessageParam,
-            {"role": message.role, "content": message.content},
-        )
-
-    return cast(
-        ChatCompletionMessageParam,
-        {"role": message.role, "content": message.text},
-    )
-
-
-def _parse_tool_calls(
-    raw_tool_calls: list[ChatCompletionMessageToolCallUnion] | None,
-) -> list[ToolCall]:
-    if not raw_tool_calls:
-        return []
-    return [
-        tool_call(
-            call_id=raw_tool_call.id,
-            name=raw_tool_call.function.name,
-            arguments=raw_tool_call.function.arguments,
-        )
-        for raw_tool_call in raw_tool_calls
-        if isinstance(raw_tool_call, ChatCompletionMessageFunctionToolCall)
-    ]
-
-
 class OpenAICompatible(ChatModel):
     _client: AsyncOpenAI | AsyncAzureOpenAI
     _model: str
@@ -368,3 +269,102 @@ class OpenAICompatible(ChatModel):
             ],
             completion="".join(text_acc),
         )
+
+
+def _convert_messages(messages: list[Message]) -> list[ChatCompletionMessageParam]:
+    return [_convert_message(message) for message in messages]
+
+
+def _convert_message(message: Message) -> ChatCompletionMessageParam:
+    if isinstance(message, ToolResultMessage):
+        return cast(
+            ChatCompletionMessageParam,
+            {
+                "role": "tool",
+                "tool_call_id": message.tool_call_id,
+                "content": message.content,
+            },
+        )
+
+    if isinstance(message, AssistantMessage) and message.tool_calls:
+        return cast(
+            ChatCompletionMessageParam,
+            {
+                "role": "assistant",
+                "content": message.text or None,
+                "tool_calls": [
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        },
+                    }
+                    for tool_call in message.tool_calls
+                ],
+            },
+        )
+
+    if isinstance(message, UserMessage) and isinstance(message.content, list):
+        content = []
+        for part in message.content:
+            if isinstance(part, ContentPartTextParam):
+                content.append({"type": "text", "text": part.text})
+            elif isinstance(part, ContentPartImageParam):
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": part.image_url.url,
+                            "detail": part.image_url.detail,
+                        },
+                    }
+                )
+        return cast(
+            ChatCompletionMessageParam,
+            {"role": message.role, "content": content},
+        )
+
+    if isinstance(message, SystemMessage):
+        if isinstance(message.content, list):
+            return cast(
+                ChatCompletionMessageParam,
+                {
+                    "role": message.role,
+                    "content": [
+                        {"type": "text", "text": part.text} for part in message.content
+                    ],
+                },
+            )
+        return cast(
+            ChatCompletionMessageParam,
+            {"role": message.role, "content": message.content},
+        )
+
+    if isinstance(message, UserMessage):
+        return cast(
+            ChatCompletionMessageParam,
+            {"role": message.role, "content": message.content},
+        )
+
+    return cast(
+        ChatCompletionMessageParam,
+        {"role": message.role, "content": message.text},
+    )
+
+
+def _parse_tool_calls(
+    raw_tool_calls: list[ChatCompletionMessageToolCallUnion] | None,
+) -> list[ToolCall]:
+    if not raw_tool_calls:
+        return []
+    return [
+        tool_call(
+            call_id=raw_tool_call.id,
+            name=raw_tool_call.function.name,
+            arguments=raw_tool_call.function.arguments,
+        )
+        for raw_tool_call in raw_tool_calls
+        if isinstance(raw_tool_call, ChatCompletionMessageFunctionToolCall)
+    ]
