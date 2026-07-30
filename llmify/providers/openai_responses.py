@@ -23,8 +23,9 @@ except ImportError:
         "Install it with: pip install py-llmify[openai]"
     )
 
+from llmify._retry import sleep_before_retry
 from llmify.base import ChatModel
-from llmify.exceptions import LLMifyError
+from llmify.exceptions import LLMifyError, RateLimitError, RetryableError
 from llmify.messages import (
     AssistantMessage,
     ContentPartImageParam,
@@ -36,6 +37,7 @@ from llmify.messages import (
     UserMessage,
 )
 from llmify.providers._openai_utils import (
+    map_openai_error,
     openai_errors,
     parse_usage,
     reject_stream_parameter,
@@ -64,6 +66,12 @@ Not every model supports every level — `xhigh` is limited to the newest
 reasoning models, and `none`/`minimal` are rejected by some. The API reports an
 unsupported level as a request error.
 """
+
+
+class _RetryableStreamError(Exception):
+    def __init__(self, error: RetryableError):
+        super().__init__(str(error))
+        self.error = error
 
 
 class ChatOpenAIResponses(ChatModel):
@@ -179,15 +187,53 @@ class ChatOpenAIResponses(ChatModel):
         params: dict[str, Any],
         text: dict[str, Any] | None,
     ) -> StreamEnd:
-        end = StreamEnd()
-        async for event in self._stream(
-            messages, tools=tools, tool_choice=tool_choice, params=params, text=text
-        ):
-            if isinstance(event, StreamEnd):
-                end = event
-        return end
+        for retry_number in range(self._default_max_retries + 1):
+            end = StreamEnd()
+            try:
+                async for event in self._stream_once(
+                    messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    params=params,
+                    text=text,
+                ):
+                    if isinstance(event, StreamEnd):
+                        end = event
+                return end
+            except _RetryableStreamError as exc:
+                if retry_number == self._default_max_retries:
+                    raise exc.error from exc.__cause__
+                await sleep_before_retry(exc.error, retry_number)
+
+        raise RuntimeError("Retry loop exhausted without returning or raising.")
 
     async def _stream(
+        self,
+        messages: list[Message],
+        tools: list[Tool | dict] | None,
+        tool_choice: Literal["auto", "required", "none"],
+        params: dict[str, Any],
+        text: dict[str, Any] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        for retry_number in range(self._default_max_retries + 1):
+            emitted = False
+            try:
+                async for event in self._stream_once(
+                    messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    params=params,
+                    text=text,
+                ):
+                    emitted = True
+                    yield event
+                return
+            except _RetryableStreamError as exc:
+                if emitted or retry_number == self._default_max_retries:
+                    raise exc.error from exc.__cause__
+                await sleep_before_retry(exc.error, retry_number)
+
+    async def _stream_once(
         self,
         messages: list[Message],
         tools: list[Tool | dict] | None,
@@ -220,7 +266,7 @@ class ChatOpenAIResponses(ChatModel):
         usage: ChatInvokeUsage | None = None
         stop_reason: str | None = None
 
-        with openai_errors():
+        try:
             async for event in stream:
                 if isinstance(event, ResponseTextDeltaEvent):
                     text_acc.append(event.delta)
@@ -239,7 +285,14 @@ class ChatOpenAIResponses(ChatModel):
                     stop_reason = _parse_stop_reason(event.response, tool_calls)
 
                 elif isinstance(event, (ResponseFailedEvent, ResponseErrorEvent)):
-                    raise LLMifyError(_error_message(event))
+                    raise _event_error(event)
+        except Exception as exc:
+            mapped = map_openai_error(exc)
+            if isinstance(mapped, RetryableError):
+                raise _RetryableStreamError(mapped) from exc
+            if mapped is not exc:
+                raise mapped from exc
+            raise
 
         yield StreamEnd(
             stop_reason=stop_reason,
@@ -392,3 +445,21 @@ def _error_message(event: ResponseFailedEvent | ResponseErrorEvent) -> str:
     if event.response.error is None:
         return "The Responses API reported an unspecified error."
     return event.response.error.message
+
+
+def _event_error(
+    event: ResponseFailedEvent | ResponseErrorEvent,
+) -> LLMifyError:
+    if isinstance(event, ResponseErrorEvent):
+        code = event.code
+    elif event.response.error is not None:
+        code = event.response.error.code
+    else:
+        code = None
+
+    message = _error_message(event)
+    if code == "rate_limit_exceeded":
+        return RateLimitError(message)
+    if code in {"server_error", "vector_store_timeout"}:
+        return RetryableError(message)
+    return LLMifyError(message)

@@ -8,6 +8,7 @@ pytest.importorskip("openai")
 import httpx
 from openai import (
     APIConnectionError,
+    APIError,
     APIStatusError,
     APITimeoutError,
     RateLimitError,
@@ -111,6 +112,33 @@ class TestMapOpenAIError:
     def test_503_status_maps_to_retryable(self) -> None:
         result = map_openai_error(_api_status_error(503))
         assert isinstance(result, RetryableError)
+
+    @pytest.mark.parametrize("status_code", [408, 409])
+    def test_transient_client_status_maps_to_retryable(self, status_code: int) -> None:
+        result = map_openai_error(_api_status_error(status_code))
+
+        assert isinstance(result, RetryableError)
+        assert result.status_code == status_code
+
+    def test_stream_api_error_maps_to_retryable(self) -> None:
+        error = APIError(
+            "Our servers are currently overloaded. Please try again later.",
+            httpx.Request("POST", "https://api.openai.com/v1/responses"),
+            body={"type": "server_error"},
+        )
+
+        result = map_openai_error(error)
+
+        assert isinstance(result, RetryableError)
+
+    def test_non_transient_stream_api_error_passes_through(self) -> None:
+        error = APIError(
+            "Invalid prompt.",
+            httpx.Request("POST", "https://api.openai.com/v1/responses"),
+            body={"type": "invalid_request_error"},
+        )
+
+        assert map_openai_error(error) is error
 
     def test_400_status_passes_through_unchanged(self) -> None:
         exc = _api_status_error(400)

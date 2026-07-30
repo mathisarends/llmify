@@ -5,6 +5,8 @@ import pytest
 
 pytest.importorskip("openai")
 
+import httpx
+from openai import APIError
 from openai.types.responses import (
     Response,
     ResponseCompletedEvent,
@@ -15,6 +17,7 @@ from openai.types.responses import (
 )
 
 from llmify import ChatOpenAIResponses
+from llmify.exceptions import RetryableError
 from llmify.messages import (
     AssistantMessage,
     ContentPartImageParam,
@@ -26,6 +29,7 @@ from llmify.messages import (
     ToolResultMessage,
     UserMessage,
 )
+from llmify.providers import openai_responses as responses_provider
 from llmify.providers.openai_responses import _convert_messages, _convert_tools
 from llmify.tools import FunctionTool
 from llmify.views import StreamEnd, StreamTextDelta, StreamToolCall
@@ -68,6 +72,16 @@ def _completed(response: Response, sequence_number: int) -> ResponseCompletedEve
 async def _stream(*events):
     for event in events:
         yield event
+
+
+async def _failing_stream(*events):
+    for event in events:
+        yield event
+    raise APIError(
+        "Our servers are currently overloaded. Please try again later.",
+        httpx.Request("POST", "https://api.openai.com/v1/responses"),
+        body={"type": "server_error"},
+    )
 
 
 class TestMessageConversion:
@@ -149,6 +163,16 @@ class TestConfiguration:
         with pytest.raises(TypeError, match="'stream' is managed"):
             await model.invoke([UserMessage(content="Hi")], stream=False)
 
+    @pytest.mark.parametrize("max_retries", [-1, -5])
+    def test_rejects_negative_max_retries(self, max_retries: int) -> None:
+        with pytest.raises(ValueError, match="greater than or equal to 0"):
+            ChatOpenAIResponses(model="gpt-test", max_retries=max_retries)
+
+    @pytest.mark.parametrize("max_retries", [True, 1.5, "2"])
+    def test_rejects_non_integer_max_retries(self, max_retries) -> None:
+        with pytest.raises(TypeError, match="must be an integer"):
+            ChatOpenAIResponses(model="gpt-test", max_retries=max_retries)
+
 
 class TestInvoke:
     @pytest.mark.asyncio
@@ -184,6 +208,39 @@ class TestInvoke:
         assert request["max_output_tokens"] == 20
         assert "max_tokens" not in request
         assert "frequency_penalty" not in request
+
+    @pytest.mark.asyncio
+    async def test_retries_and_discards_an_incomplete_attempt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeper = AsyncMock()
+        monkeypatch.setattr(responses_provider, "sleep_before_retry", sleeper)
+        model = ChatOpenAIResponses(model="gpt-test", max_retries=2)
+        model._client.responses.create = AsyncMock(
+            side_effect=[
+                _failing_stream(_text_delta("discarded", 0)),
+                _stream(
+                    _text_delta("Hello", 0),
+                    _completed(_response(), 1),
+                ),
+            ]
+        )
+
+        result = await model.invoke([UserMessage(content="Hi")])
+
+        assert result.completion == "Hello"
+        assert model._client.responses.create.await_count == 2
+        sleeper.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_when_disabled(self) -> None:
+        model = ChatOpenAIResponses(model="gpt-test", max_retries=0)
+        model._client.responses.create = AsyncMock(return_value=_failing_stream())
+
+        with pytest.raises(RetryableError, match="overloaded"):
+            await model.invoke([UserMessage(content="Hi")])
+
+        assert model._client.responses.create.await_count == 1
 
     @pytest.mark.asyncio
     async def test_sends_the_reasoning_effort(self) -> None:
@@ -272,3 +329,41 @@ class TestInvoke:
         assert emitted[0].delta == "Hi"
         assert isinstance(emitted[1], StreamEnd)
         assert emitted[1].completion == "Hi"
+
+    @pytest.mark.asyncio
+    async def test_stream_retries_before_emitting_an_event(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeper = AsyncMock()
+        monkeypatch.setattr(responses_provider, "sleep_before_retry", sleeper)
+        model = ChatOpenAIResponses(model="gpt-test", max_retries=2)
+        model._client.responses.create = AsyncMock(
+            side_effect=[
+                _failing_stream(),
+                _stream(
+                    _text_delta("Hello", 0),
+                    _completed(_response(), 1),
+                ),
+            ]
+        )
+
+        emitted = [event async for event in model.stream([UserMessage(content="Hi")])]
+
+        assert emitted[0] == StreamTextDelta(delta="Hello")
+        assert model._client.responses.create.await_count == 2
+        sleeper.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stream_does_not_replay_after_emitting_an_event(self) -> None:
+        model = ChatOpenAIResponses(model="gpt-test", max_retries=2)
+        model._client.responses.create = AsyncMock(
+            return_value=_failing_stream(_text_delta("partial", 0))
+        )
+        emitted = []
+
+        with pytest.raises(RetryableError, match="overloaded"):
+            async for event in model.stream([UserMessage(content="Hi")]):
+                emitted.append(event)
+
+        assert emitted == [StreamTextDelta(delta="partial")]
+        assert model._client.responses.create.await_count == 1

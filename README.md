@@ -387,6 +387,27 @@ response = await llm.invoke(
 
 Supported parameters: `temperature`, `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`.
 
+### Retries
+
+OpenAI and Anthropic clients retry transient connection, timeout, rate-limit,
+and server errors automatically. `max_retries` is the number of additional
+attempts after the initial request and defaults to `2`:
+
+```python
+llm = ChatOpenAIResponses(
+    model="gpt-5.4-mini",
+    max_retries=5,
+)
+```
+
+Responses API calls also recover from transient errors delivered after the HTTP
+stream has started. `invoke()` safely discards an incomplete attempt before
+retrying. `stream()` retries only until its first event has been emitted; after
+that it raises `RetryableError` rather than replaying duplicate output.
+Rate-limit `Retry-After` headers are respected, with exponential backoff and
+jitter used for other transient stream failures. Set `max_retries=0` to disable
+automatic retries.
+
 ## Providers
 
 ### OpenAI

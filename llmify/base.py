@@ -26,6 +26,11 @@ class ChatModel(ABC):
         max_retries: int = 2,
         **kwargs: Any,
     ):
+        if not isinstance(max_retries, int) or isinstance(max_retries, bool):
+            raise TypeError("'max_retries' must be an integer.")
+        if max_retries < 0:
+            raise ValueError("'max_retries' must be greater than or equal to 0.")
+
         self._model = model
         self._default_max_tokens = max_tokens
         self._default_temperature = temperature

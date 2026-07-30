@@ -7,6 +7,7 @@ try:
     from openai import (
         APIConnectionError as _OpenAIConnectionError,
     )
+    from openai import APIError as _OpenAIAPIError
     from openai import (
         APIStatusError as _OpenAIStatusError,
     )
@@ -32,6 +33,15 @@ from llmify.exceptions import (
 from llmify.messages import Function, ToolCall
 from llmify.tools import Tool
 from llmify.views import ChatInvokeUsage
+
+_TRANSIENT_API_ERROR_CODES = frozenset(
+    {
+        "overloaded_error",
+        "rate_limit_exceeded",
+        "server_error",
+        "timeout",
+    }
+)
 
 
 def resolve_api_key(
@@ -121,8 +131,24 @@ def map_openai_error(exc: Exception) -> Exception:
         return CredentialsUnavailableError(str(exc))
     if isinstance(exc, (_OpenAIConnectionError, _OpenAITimeoutError)):
         return RetryableError(str(exc))
-    if isinstance(exc, _OpenAIStatusError) and exc.status_code >= 500:
+    if isinstance(exc, _OpenAIStatusError) and (
+        exc.status_code in {408, 409} or exc.status_code >= 500
+    ):
         return RetryableError(str(exc), status_code=exc.status_code)
+    if type(exc) is _OpenAIAPIError:
+        code = exc.code or exc.type
+        message = str(exc).lower()
+        if code == "rate_limit_exceeded":
+            return RateLimitError(str(exc))
+        if code in _TRANSIENT_API_ERROR_CODES or any(
+            phrase in message
+            for phrase in (
+                "overloaded",
+                "temporarily unavailable",
+                "try again later",
+            )
+        ):
+            return RetryableError(str(exc))
     return exc
 
 
