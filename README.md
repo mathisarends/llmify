@@ -421,6 +421,19 @@ Use `ChatOpenAIResponses` when an endpoint exposes OpenAI's Responses API rather
 than the Chat Completions API. It supports the same llmify `invoke` and `stream`
 interface.
 
+For reasoning models, `reasoning_effort` sets how much the model thinks before
+answering — `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"` or `"xhigh"`:
+
+```python
+llm = ChatOpenAIResponses(model="gpt-5.4-mini", reasoning_effort="high")
+
+# per call, overriding the default above
+await llm.invoke(messages, reasoning_effort="low")
+```
+
+Which levels a model accepts differs — `"xhigh"` is limited to the newest
+reasoning models — and an unsupported level comes back as a request error.
+
 ### Codex
 
 ```python
@@ -430,6 +443,7 @@ llm = ChatCodex(
     model="gpt-5.6-terra",
     api_key="...",  # optional if CODEX_ACCESS_KEY is set
     chatgpt_account_id="...",
+    reasoning_effort="high",  # optional
 )
 ```
 
@@ -447,8 +461,11 @@ If the [Codex CLI](https://github.com/openai/codex) is installed and logged in
 (`codex login`), its session can be used directly — no environment variables:
 
 ```python
-llm = ChatCodex.from_codex_cli(model="gpt-5.6-terra")
+llm = ChatCodex.from_cli(model="gpt-5.6-terra", reasoning_effort="high")
 ```
+
+`from_cli` takes the same model options as the constructor — only `api_key` and
+`chatgpt_account_id` come from the login instead.
 
 This reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`) for the account id
 and access token — no network access, no writes. From the request path onwards

@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from .providers.cerebras import ChatCerebras, CerebrasModel
     from .providers.codex import ChatCodex
     from .providers.openai_compatible import OpenAICompatible
-    from .providers.openai_responses import ChatOpenAIResponses
+    from .providers.openai_responses import ChatOpenAIResponses, ReasoningEffort
     from .providers.anthropic import ChatAnthropic, AnthropicModel
     from .providers.google import ChatGoogle, GoogleModel
 
@@ -100,6 +100,11 @@ def __getattr__(name: str):
 
         return ChatOpenAIResponses
 
+    if name == "ReasoningEffort":
+        from .providers.openai_responses import ReasoningEffort
+
+        return ReasoningEffort
+
     if name == "OpenAICompatible":
         from .providers.openai_compatible import OpenAICompatible
 
@@ -149,6 +154,7 @@ __all__ = [
     "CodexCredentials",
     "CodexCredentialsError",
     "ChatOpenAIResponses",
+    "ReasoningEffort",
     "ChatAnthropic",
     "AnthropicModel",
     "ChatGoogle",

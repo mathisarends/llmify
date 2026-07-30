@@ -10,7 +10,7 @@ from llmify import ChatCodex, SystemMessage, UserMessage
 
 
 async def main() -> None:
-    llm = ChatCodex.from_codex_cli(model="gpt-5.6-terra")
+    llm = ChatCodex.from_cli(model="gpt-5.6-terra", reasoning_effort="high")
 
     response = await llm.invoke(
         [

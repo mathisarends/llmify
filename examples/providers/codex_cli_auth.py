@@ -1,6 +1,6 @@
 """Inspect the borrowed Codex CLI credentials and wire them up by hand.
 
-`ChatCodex.from_codex_cli()` does all of this in one line — the explicit form
+`ChatCodex.from_cli()` does all of this in one line — the explicit form
 is for pointing at a different `auth.json` or sharing one token provider
 across several clients.
 """

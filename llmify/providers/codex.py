@@ -6,8 +6,7 @@ import httpx
 
 from llmify.auth.codex_cli import CodexCliAuth, read_codex_credentials
 from llmify.providers._openai_utils import resolve_api_key
-from llmify.providers.openai_responses import ChatOpenAIResponses
-from llmify.utils import timed
+from llmify.providers.openai_responses import ChatOpenAIResponses, ReasoningEffort
 
 _CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
@@ -21,6 +20,7 @@ class ChatCodex(ChatOpenAIResponses):
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
         store: bool = False,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
@@ -43,6 +43,7 @@ class ChatCodex(ChatOpenAIResponses):
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
+            reasoning_effort=reasoning_effort,
             store=store,
             timeout=timeout,
             max_retries=max_retries,
@@ -51,15 +52,26 @@ class ChatCodex(ChatOpenAIResponses):
         )
 
     @classmethod
-    @timed("ChatCodex.from_codex_cli")
-    def from_codex_cli(
+    def from_cli(
         cls,
         model: str,
         *,
         auth_path: Path | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
+        store: bool = False,
+        timeout: float | httpx.Timeout | None = 60.0,
+        max_retries: int = 2,
+        default_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> Self:
         """Build a client from the login of the locally installed Codex CLI.
+
+        Takes the same model options as the constructor; `api_key` and
+        `chatgpt_account_id` come from the CLI login instead. `auth_path` points
+        at a different `auth.json` than the default.
 
         Reads account id and access token from `~/.codex/auth.json` (or
         `$CODEX_HOME/auth.json`); nothing is sent or written here. The token is
@@ -73,5 +85,13 @@ class ChatCodex(ChatOpenAIResponses):
             model=model,
             api_key=auth,
             chatgpt_account_id=auth.account_id,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            reasoning_effort=reasoning_effort,
+            store=store,
+            timeout=timeout,
+            max_retries=max_retries,
+            default_headers=default_headers,
             **kwargs,
         )

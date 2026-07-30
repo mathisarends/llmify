@@ -88,7 +88,7 @@ class TestChatCodex:
             ChatCodex(model="gpt-test", chatgpt_account_id="account-123")
 
 
-class TestChatCodexFromCodexCli:
+class TestChatCodexFromCli:
     @patch("llmify.providers.openai_responses.AsyncOpenAI")
     @pytest.mark.asyncio
     async def test_borrows_account_id_and_token_from_the_cli(
@@ -96,7 +96,7 @@ class TestChatCodexFromCodexCli:
     ) -> None:
         auth_path = _auth_file(tmp_path / "auth.json")
 
-        ChatCodex.from_codex_cli(model="gpt-test", auth_path=auth_path)
+        ChatCodex.from_cli(model="gpt-test", auth_path=auth_path)
 
         stored_token = json.loads(auth_path.read_text())["tokens"]["access_token"]
         kwargs = mock_client.call_args.kwargs
@@ -107,7 +107,7 @@ class TestChatCodexFromCodexCli:
 
     @patch("llmify.providers.openai_responses.AsyncOpenAI")
     def test_forwards_model_options(self, mock_client, tmp_path: Path) -> None:
-        llm = ChatCodex.from_codex_cli(
+        llm = ChatCodex.from_cli(
             model="gpt-test",
             auth_path=_auth_file(tmp_path / "auth.json"),
             temperature=0.2,
@@ -117,14 +117,22 @@ class TestChatCodexFromCodexCli:
         assert llm.model == "gpt-test"
         assert mock_client.call_args.kwargs["max_retries"] == 5
 
+    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    def test_forwards_the_reasoning_effort(self, mock_client, tmp_path: Path) -> None:
+        llm = ChatCodex.from_cli(
+            model="gpt-test",
+            auth_path=_auth_file(tmp_path / "auth.json"),
+            reasoning_effort="xhigh",
+        )
+
+        assert llm._default_kwargs["reasoning_effort"] == "xhigh"
+
     def test_reports_a_missing_login(self, tmp_path: Path) -> None:
         with pytest.raises(CodexCredentialsError, match="codex login"):
-            ChatCodex.from_codex_cli(
-                model="gpt-test", auth_path=tmp_path / "missing.json"
-            )
+            ChatCodex.from_cli(model="gpt-test", auth_path=tmp_path / "missing.json")
 
     def test_reports_a_login_without_account_id(self, tmp_path: Path) -> None:
         auth_path = _auth_file(tmp_path / "auth.json", account_id=None)
 
         with pytest.raises(CodexCredentialsError, match="No ChatGPT account id"):
-            ChatCodex.from_codex_cli(model="gpt-test", auth_path=auth_path)
+            ChatCodex.from_cli(model="gpt-test", auth_path=auth_path)

@@ -186,6 +186,42 @@ class TestInvoke:
         assert "frequency_penalty" not in request
 
     @pytest.mark.asyncio
+    async def test_sends_the_reasoning_effort(self) -> None:
+        model = ChatOpenAIResponses(model="gpt-test", reasoning_effort="high")
+        model._client.responses.create = AsyncMock(
+            return_value=_stream(_completed(_response(), 0))
+        )
+
+        await model.invoke([UserMessage(content="Hi")])
+
+        request = model._client.responses.create.call_args.kwargs
+        assert request["reasoning"] == {"effort": "high"}
+        assert "reasoning_effort" not in request
+
+    @pytest.mark.asyncio
+    async def test_per_call_reasoning_effort_wins(self) -> None:
+        model = ChatOpenAIResponses(model="gpt-test", reasoning_effort="high")
+        model._client.responses.create = AsyncMock(
+            return_value=_stream(_completed(_response(), 0))
+        )
+
+        await model.invoke([UserMessage(content="Hi")], reasoning_effort="low")
+
+        request = model._client.responses.create.call_args.kwargs
+        assert request["reasoning"] == {"effort": "low"}
+
+    @pytest.mark.asyncio
+    async def test_omits_reasoning_when_not_configured(self) -> None:
+        model = ChatOpenAIResponses(model="gpt-test")
+        model._client.responses.create = AsyncMock(
+            return_value=_stream(_completed(_response(), 0))
+        )
+
+        await model.invoke([UserMessage(content="Hi")])
+
+        assert "reasoning" not in model._client.responses.create.call_args.kwargs
+
+    @pytest.mark.asyncio
     async def test_emits_complete_tool_call(self) -> None:
         item = ResponseFunctionToolCall.model_construct(
             type="function_call",

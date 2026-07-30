@@ -57,6 +57,14 @@ _CHAT_ONLY_PARAMS = frozenset(
     {"frequency_penalty", "presence_penalty", "stop", "seed", "response_format"}
 )
 
+type ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+"""Effort levels the Responses API accepts.
+
+Not every model supports every level — `xhigh` is limited to the newest
+reasoning models, and `none`/`minimal` are rejected by some. The API reports an
+unsupported level as a request error.
+"""
+
 
 class ChatOpenAIResponses(ChatModel):
     def __init__(
@@ -67,6 +75,7 @@ class ChatOpenAIResponses(ChatModel):
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
         store: bool = False,
         timeout: float | httpx.Timeout | None = 60.0,
         max_retries: int = 2,
@@ -74,6 +83,9 @@ class ChatOpenAIResponses(ChatModel):
         **kwargs: Any,
     ):
         reject_stream_parameter(kwargs)
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
+
         super().__init__(
             model=model,
             max_tokens=max_tokens,
@@ -314,6 +326,13 @@ def _responses_params(params: dict[str, Any]) -> dict[str, Any]:
     max_tokens = params.pop("max_tokens", None)
     if max_tokens is not None:
         params["max_output_tokens"] = max_tokens
+
+    reasoning_effort = params.pop("reasoning_effort", None)
+    if reasoning_effort is not None:
+        params["reasoning"] = {
+            **params.get("reasoning", {}),
+            "effort": reasoning_effort,
+        }
 
     return params
 
