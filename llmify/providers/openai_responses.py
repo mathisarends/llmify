@@ -66,7 +66,7 @@ from llmify.providers.openai_responses_types import (
     StreamReasoningSummaryDelta,
 )
 from llmify.retries import RetryCallback, retry_call, retry_stream
-from llmify.tools import Tool
+from llmify.tools import Tool, ToolChoice
 from llmify.views import StreamTextDelta, StreamToolCall
 
 _CHAT_ONLY_PARAMS = frozenset(
@@ -173,7 +173,7 @@ class ChatOpenAIResponses(ChatModel):
         messages: list[Message],
         output_format: type[T] | None = None,
         tools: list[Tool | dict] | None = None,
-        tool_choice: Literal["auto", "required", "none"] = "auto",
+        tool_choice: ToolChoice = "auto",
         provider_state: OpenAIResponsesState | None = None,
         responses_options: ResponsesOptions | None = None,
         on_retry: RetryCallback | None = None,
@@ -201,7 +201,7 @@ class ChatOpenAIResponses(ChatModel):
         tools: list[Tool | dict],
         output_format: type[T] | None = None,
         *,
-        tool_choice: Literal["auto", "required", "none"] = "auto",
+        tool_choice: ToolChoice = "auto",
         tool_executor: ToolExecutor | None = None,
         max_tool_rounds: int = 8,
         provider_state: OpenAIResponsesState | None = None,
@@ -271,7 +271,7 @@ class ChatOpenAIResponses(ChatModel):
         self,
         messages: list[Message],
         tools: list[Tool | dict] | None = None,
-        tool_choice: Literal["auto", "required", "none"] = "auto",
+        tool_choice: ToolChoice = "auto",
         provider_state: OpenAIResponsesState | None = None,
         responses_options: ResponsesOptions | None = None,
         on_retry: RetryCallback | None = None,
@@ -293,7 +293,7 @@ class ChatOpenAIResponses(ChatModel):
         self,
         messages: list[Message],
         tools: list[Tool | dict] | None,
-        tool_choice: Literal["auto", "required", "none"],
+        tool_choice: ToolChoice,
         provider_state: OpenAIResponsesState | None,
         options: ResponsesOptions,
         params: dict[str, Any],
@@ -332,7 +332,7 @@ class ChatOpenAIResponses(ChatModel):
         self,
         messages: list[Message],
         tools: list[Tool | dict] | None,
-        tool_choice: Literal["auto", "required", "none"],
+        tool_choice: ToolChoice,
         provider_state: OpenAIResponsesState | None,
         options: ResponsesOptions,
         params: dict[str, Any],
@@ -361,7 +361,7 @@ class ChatOpenAIResponses(ChatModel):
         self,
         messages: list[Message],
         tools: list[Tool | dict] | None,
-        tool_choice: Literal["auto", "required", "none"],
+        tool_choice: ToolChoice,
         provider_state: OpenAIResponsesState | None,
         options: ResponsesOptions,
         params: dict[str, Any],
@@ -545,7 +545,7 @@ def _build_request(
     model: str,
     messages: list[Message],
     tools: list[Tool | dict] | None,
-    tool_choice: Literal["auto", "required", "none"],
+    tool_choice: ToolChoice,
     state: OpenAIResponsesState | None,
     options: ResponsesOptions,
     params: dict[str, Any],
