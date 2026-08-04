@@ -14,13 +14,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-openai = ["openai>=2.14.0"]
+openai = ["openai>=2.29.0"]
+websocket = ["openai[realtime]>=2.29.0"]
 cerebras = ["openai>=2.14.0"]
 anthropic = ["anthropic>=0.86.0"]
 google = ["google-genai>=2.10.0"]
-tokens = ["tokenary>=0.1.1"]
 all = [
-    "openai>=2.14.0",
+    "openai[realtime]>=2.29.0",
     "anthropic>=0.86.0",
     "google-genai>=2.10.0",
 ]
@@ -31,11 +31,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "python-dotenv>=1.2.1",
-    "tokenary>=0.1.1; python_version >= '3.13'",
 ]
-
-[tool.uv]
-environments = ["python_full_version >= '3.13'"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
