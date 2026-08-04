@@ -4,7 +4,12 @@ import pytest
 
 pytest.importorskip("openai")
 
-from llmify import ChatAzureOpenAIResponses
+from llmify import (
+    ChatAzureOpenAIResponses,
+    ContinuationMode,
+    PromptCacheOptions,
+    WebSocketResponsesTransport,
+)
 from llmify.exceptions import (
     AuthenticationError,
     CredentialsUnavailableError,
@@ -103,6 +108,32 @@ class TestClientConfiguration:
         assert str(model._client.base_url) == (
             "https://example.openai.azure.com/openai/v1/"
         )
+
+    def test_azure_responses_exposes_responses_options_directly(self) -> None:
+        transport = WebSocketResponsesTransport()
+        cache_options = PromptCacheOptions(mode="explicit", ttl="30m")
+
+        model = ChatAzureOpenAIResponses(
+            model="deployment-name",
+            api_key="azure-key",
+            azure_endpoint="https://example.openai.azure.com",
+            store=True,
+            transport=transport,
+            continuation_mode=ContinuationMode.PREVIOUS_RESPONSE_ID,
+            preserve_reasoning=False,
+            reasoning_summary="detailed",
+            prompt_cache_key="tenant:acme:assistant-v1",
+            prompt_cache_options=cache_options,
+        )
+
+        assert model._transport is transport
+        assert model._responses_options.continuation_mode is (
+            ContinuationMode.PREVIOUS_RESPONSE_ID
+        )
+        assert model._responses_options.preserve_reasoning is False
+        assert model._responses_options.reasoning_summary == "detailed"
+        assert model._responses_options.prompt_cache_key == "tenant:acme:assistant-v1"
+        assert model._responses_options.prompt_cache_options is cache_options
 
     def test_azure_responses_requires_endpoint(
         self, monkeypatch: pytest.MonkeyPatch
