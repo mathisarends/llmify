@@ -25,6 +25,7 @@ from .providers import (
     ChatInvokeCompletion,
     ChatInvokeUsage,
     StreamEventType,
+    StreamProviderEvent,
     StreamTextDelta,
     StreamToolCall,
     StreamEnd,
@@ -41,13 +42,42 @@ from .tools import (
 if TYPE_CHECKING:
     from .auth import CodexCliAuth, CodexCredentials, CodexCredentialsError
     from .providers.openai import ChatOpenAI, OpenAIModel
-    from .providers.azure import ChatAzureOpenAI
+    from .providers.azure import ChatAzureOpenAI, ChatAzureOpenAIResponses
     from .providers.cerebras import ChatCerebras, CerebrasModel
     from .providers.codex import ChatCodex
     from .providers.openai_compatible import OpenAICompatible
     from .providers.openai_responses import ChatOpenAIResponses, ReasoningEffort
+    from .providers.openai_responses_transport import (
+        HTTPResponsesTransport,
+        ResponsesSession,
+        ResponsesTransport,
+        WebSocketResponsesTransport,
+    )
+    from .providers.openai_responses_types import (
+        ContinuationMode,
+        OpenAIResponsesCompletion,
+        OpenAIResponsesState,
+        OpenAIResponsesStreamEnd,
+        OpenAIResponsesStreamEventType,
+        OpenAIResponsesUsage,
+        PromptCacheOptions,
+        ResponsesOptions,
+        StreamOutputItemAdded,
+        StreamOutputItemDone,
+        StreamReasoningSummaryDelta,
+    )
     from .providers.anthropic import ChatAnthropic, AnthropicModel
+    from .providers.anthropic_types import (
+        AnthropicCompletion,
+        AnthropicStreamEnd,
+        AnthropicUsage,
+    )
     from .providers.google import ChatGoogle, GoogleModel
+    from .providers.google_types import (
+        GoogleCompletion,
+        GoogleStreamEnd,
+        GoogleUsage,
+    )
 
 
 def __getattr__(name: str):
@@ -65,6 +95,11 @@ def __getattr__(name: str):
         from .providers.azure import ChatAzureOpenAI
 
         return ChatAzureOpenAI
+
+    if name == "ChatAzureOpenAIResponses":
+        from .providers.azure import ChatAzureOpenAIResponses
+
+        return ChatAzureOpenAIResponses
 
     if name == "ChatCerebras":
         from .providers.cerebras import ChatCerebras
@@ -106,6 +141,33 @@ def __getattr__(name: str):
 
         return ReasoningEffort
 
+    if name in {
+        "ContinuationMode",
+        "OpenAIResponsesCompletion",
+        "OpenAIResponsesState",
+        "OpenAIResponsesStreamEnd",
+        "OpenAIResponsesStreamEventType",
+        "OpenAIResponsesUsage",
+        "PromptCacheOptions",
+        "ResponsesOptions",
+        "StreamOutputItemAdded",
+        "StreamOutputItemDone",
+        "StreamReasoningSummaryDelta",
+    }:
+        from .providers import openai_responses_types
+
+        return getattr(openai_responses_types, name)
+
+    if name in {
+        "HTTPResponsesTransport",
+        "ResponsesSession",
+        "ResponsesTransport",
+        "WebSocketResponsesTransport",
+    }:
+        from .providers import openai_responses_transport
+
+        return getattr(openai_responses_transport, name)
+
     if name == "OpenAICompatible":
         from .providers.openai_compatible import OpenAICompatible
 
@@ -121,6 +183,15 @@ def __getattr__(name: str):
 
         return AnthropicModel
 
+    if name in {
+        "AnthropicCompletion",
+        "AnthropicStreamEnd",
+        "AnthropicUsage",
+    }:
+        from .providers import anthropic_types
+
+        return getattr(anthropic_types, name)
+
     if name == "ChatGoogle":
         from .providers.google import ChatGoogle
 
@@ -131,7 +202,22 @@ def __getattr__(name: str):
 
         return GoogleModel
 
+    if name in {
+        "GoogleCompletion",
+        "GoogleStreamEnd",
+        "GoogleUsage",
+    }:
+        from .providers import google_types
+
+        return getattr(google_types, name)
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    # PEP 562: without this, the lazily exported names are invisible to dir()
+    # and therefore to REPL and IDE completion.
+    return sorted({*globals(), *__all__})
 
 
 __all__ = [
@@ -148,6 +234,7 @@ __all__ = [
     "ChatOpenAI",
     "OpenAIModel",
     "ChatAzureOpenAI",
+    "ChatAzureOpenAIResponses",
     "ChatCerebras",
     "CerebrasModel",
     "ChatCodex",
@@ -156,15 +243,37 @@ __all__ = [
     "CodexCredentialsError",
     "ChatOpenAIResponses",
     "ReasoningEffort",
+    "ContinuationMode",
+    "OpenAIResponsesCompletion",
+    "OpenAIResponsesState",
+    "OpenAIResponsesStreamEnd",
+    "OpenAIResponsesStreamEventType",
+    "OpenAIResponsesUsage",
+    "PromptCacheOptions",
+    "ResponsesOptions",
+    "StreamOutputItemAdded",
+    "StreamOutputItemDone",
+    "StreamReasoningSummaryDelta",
+    "HTTPResponsesTransport",
+    "ResponsesSession",
+    "ResponsesTransport",
+    "WebSocketResponsesTransport",
     "ChatAnthropic",
     "AnthropicModel",
+    "AnthropicCompletion",
+    "AnthropicStreamEnd",
+    "AnthropicUsage",
     "ChatGoogle",
     "GoogleModel",
+    "GoogleCompletion",
+    "GoogleStreamEnd",
+    "GoogleUsage",
     "ChatModel",
     "OpenAICompatible",
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
     "StreamEventType",
+    "StreamProviderEvent",
     "StreamTextDelta",
     "StreamToolCall",
     "StreamEnd",

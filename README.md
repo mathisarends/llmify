@@ -53,14 +53,12 @@ pip install py-llmify[cerebras]    # Cerebras
 pip install py-llmify[anthropic]   # Anthropic (Claude)
 pip install py-llmify[google]      # Google Gemini
 pip install py-llmify[all]         # All providers
-pip install py-llmify[tokens]      # Token tracking + Tokenary cost calculation
 ```
 
-The `tokens` extra currently requires Python 3.13 because that is the minimum
-Python version supported by Tokenary. Extras can be combined, for example:
+Extras can be combined, for example:
 
 ```bash
-pip install py-llmify[openai,tokens]
+pip install py-llmify[openai,google]
 ```
 
 ## Quick Start
@@ -338,23 +336,27 @@ for a single call. Callback exceptions cancel the retry and propagate to the cal
 ### Token Usage Tracking
 
 Every response carries `usage`, and every provider exposes its model as `llm.model`.
-With the optional `py-llmify[tokens]` extra, a `TokenTracker` aggregates usage and
-Tokenary-backed USD costs across calls and providers:
 
 ```python
-from llmify.tokens import TokenTracker, calculate_cost
-
-tracker = TokenTracker()
-
 response = await llm.invoke([UserMessage(content="Hi")])
-tracker.add(response, model=llm.model)  # also accepts a StreamEnd or ChatInvokeUsage
-
-print(tracker.summary().total_tokens)       # UsageSummary over all entries
-print(tracker.cost_summary().total_cost)    # USD across models
-print(calculate_cost(response, model=llm.model).total_cost)  # single call
+print(response.usage)
 ```
 
-Full runnable example: `examples/token_tracking.py`
+`ChatInvokeUsage` holds only the counters every provider reports —
+`prompt_tokens`, `prompt_cached_tokens`, `completion_tokens`, `total_tokens`.
+Providers that report more return a subclass, so backend-specific counters never
+leak into the shared model:
+
+| Provider | Usage type | Extra fields |
+| --- | --- | --- |
+| Anthropic | `AnthropicUsage` | `prompt_cache_creation_tokens` |
+| Google | `GoogleUsage` | `prompt_image_tokens` |
+| OpenAI Responses | `OpenAIResponsesUsage` | `prompt_cache_write_tokens`, `reasoning_tokens` |
+
+The matching completion and stream-end types (`AnthropicCompletion` /
+`AnthropicStreamEnd`, `GoogleCompletion` / `GoogleStreamEnd`, and the
+`OpenAIResponses*` pair) narrow `usage` to the provider's type, so the extra
+fields are visible to type checkers without a cast.
 
 ## Configuration
 
@@ -449,6 +451,132 @@ await llm.invoke(messages, reasoning_effort="low")
 Which levels a model accepts differs — `"xhigh"` is limited to the newest
 reasoning models — and an unsupported level comes back as a request error.
 
+#### Native Responses state
+
+Responses calls return an `OpenAIResponsesCompletion` with an explicit,
+serializable `provider_state`. The state contains the response ID, the complete
+local replay window, and every native `response.output_item.done` item (including
+reasoning, messages, and function calls):
+
+```python
+from llmify import ChatOpenAIResponses, UserMessage
+
+llm = ChatOpenAIResponses(model="gpt-5.6", store=False)
+
+first = await llm.invoke([UserMessage(content="Inspect this problem")])
+second = await llm.invoke(
+    [UserMessage(content="Now refine the answer")],  # only new input
+    provider_state=first.provider_state,
+)
+```
+
+Stateless mode is the default. With `store=False`, encrypted reasoning is
+requested and replayed unchanged; it is opaque provider state, not readable
+chain-of-thought. Use `ContinuationMode.PREVIOUS_RESPONSE_ID` to send only new
+items when the previous response is available server-side. Instructions are
+retained locally and resent because `previous_response_id` does not carry them
+forward automatically.
+
+```python
+from llmify import ContinuationMode, ResponsesOptions
+
+llm = ChatOpenAIResponses(
+    model="gpt-5.6",
+    store=True,
+    responses_options=ResponsesOptions(
+        continuation_mode=ContinuationMode.PREVIOUS_RESPONSE_ID,
+    ),
+)
+```
+
+#### Complete local tool loop
+
+`invoke_with_tools` executes all function calls in a response, feeds every
+`function_call_output` back to the model, and repeats until a final answer is
+produced. FunctionTool exceptions become structured tool outputs so the model
+can recover. `max_tool_rounds` bounds the loop. Dict schemas and
+`RawSchemaTool` values need a `tool_executor` callback because they contain no
+implementation.
+
+```python
+from llmify import UserMessage, tool
+
+@tool
+def lookup(query: str) -> str:
+    return f"result for {query}"
+
+result = await llm.invoke_with_tools(
+    [UserMessage(content="Look up alpha and beta, then compare them")],
+    tools=[lookup],
+    max_tool_rounds=8,
+)
+```
+
+#### Reasoning summaries and native stream events
+
+Set `reasoning_summary="auto"`, `"concise"`, or `"detailed"`. Summaries arrive
+as `StreamReasoningSummaryDelta` and are never mixed into `StreamTextDelta`.
+Responses streams also expose `StreamOutputItemAdded` and
+`StreamOutputItemDone`; the final `OpenAIResponsesStreamEnd` always carries the
+assembled provider state. These Responses-only events extend the neutral
+`StreamProviderEvent` hook rather than changing other providers' event models.
+
+Usage is returned as `OpenAIResponsesUsage`, adding `reasoning_tokens` and
+`prompt_cache_write_tokens` to the common token fields.
+
+#### Prompt caching
+
+Use a stable `prompt_cache_key`; keep instructions and tool definitions stable
+and ordered. On models supporting explicit breakpoints, `cache=True` marks the
+end of a message as reusable provider input:
+
+```python
+from llmify import PromptCacheOptions, ResponsesOptions, SystemMessage
+
+options = ResponsesOptions(
+    prompt_cache_key="tenant:acme:agent-v1",
+    prompt_cache_options=PromptCacheOptions(mode="explicit", ttl="30m"),
+)
+llm = ChatOpenAIResponses(model="gpt-5.6", responses_options=options)
+messages = [SystemMessage(content=large_stable_instructions, cache=True)]
+```
+
+Explicit cache options and breakpoints are model-dependent; older models can
+reject them. Automatic prompt caching remains available without these options.
+
+#### WebSocket transport
+
+Install the optional transport dependency and select it explicitly:
+
+```console
+pip install "py-llmify[websocket]"
+```
+
+```python
+from llmify import ResponsesOptions, WebSocketResponsesTransport
+
+llm = ChatOpenAIResponses(
+    model="gpt-5.6",
+    transport=WebSocketResponsesTransport(),
+    responses_options=ResponsesOptions(
+        continuation_mode="previous_response_id",
+    ),
+)
+```
+
+HTTP/SSE remains the default. A WebSocket `invoke_with_tools` call keeps one
+connection open across all model/tool rounds and sends incremental tool outputs
+with `previous_response_id`. A standalone WebSocket `invoke` opens one scoped
+connection; when `store=False`, a later standalone invocation safely falls back
+to the state's full local replay window because connection-local state no longer
+exists.
+
+Transport is a port, not a mode flag. `HTTPResponsesTransport` is the default,
+`WebSocketResponsesTransport` is opt-in, and custom implementations can provide
+the `ResponsesTransport`/`ResponsesSession` protocols for testing or alternate
+wire transports. Continuation knowledge remains scoped to the session that owns
+it.
+
 ### Codex
 
 ```python
@@ -530,6 +658,22 @@ llm = ChatAzureOpenAI(
 )
 ```
 
+For Azure's Responses API, use `ChatAzureOpenAIResponses`:
+
+```python
+from llmify import ChatAzureOpenAIResponses
+
+llm = ChatAzureOpenAIResponses(
+    model="my-gpt-deployment",
+    api_key="...",           # optional if AZURE_OPENAI_API_KEY is set
+    azure_endpoint="https://<resource>.openai.azure.com/",  # optional if env var is set
+    reasoning_effort="high",  # optional
+)
+```
+
+It provides the same `invoke`, `stream`, structured-output, and tool-calling
+interface as `ChatOpenAIResponses` and uses Azure's `/openai/v1/` endpoint.
+
 ### Anthropic
 
 ```python
@@ -542,6 +686,10 @@ llm = ChatAnthropic(
 ```
 
 The Anthropic provider supports the same API surface — `invoke`, `stream`, structured output, and tool calling — all mapped to the Anthropic messages API under the hood.
+
+`invoke` returns an `AnthropicCompletion` and `stream` ends with an
+`AnthropicStreamEnd`; both carry `AnthropicUsage`, which adds
+`prompt_cache_creation_tokens` to the common token fields.
 
 ### Cerebras
 
@@ -568,6 +716,10 @@ llm = ChatGoogle(
 ```
 
 The Google provider supports the same API surface: `invoke`, `stream`, structured output, and tool calling.
+
+`invoke` returns a `GoogleCompletion` and `stream` ends with a
+`GoogleStreamEnd`; both carry `GoogleUsage`, which adds `prompt_image_tokens`
+to the common token fields.
 
 ## Credits
 

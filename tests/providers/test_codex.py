@@ -8,7 +8,13 @@ import pytest
 
 pytest.importorskip("openai")
 
-from llmify import ChatCodex
+from llmify import (
+    ChatCodex,
+    ContinuationMode,
+    PromptCacheOptions,
+    ResponsesOptions,
+    WebSocketResponsesTransport,
+)
 from llmify.auth import CodexCliAuth, CodexCredentialsError
 from llmify.exceptions import CredentialsUnavailableError
 
@@ -73,6 +79,28 @@ class TestChatCodex:
             "ChatGPT-Account-Id": "account-123",
         }
 
+    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    def test_exposes_responses_configuration_explicitly(self, mock_client) -> None:
+        transport = WebSocketResponsesTransport()
+        options = ResponsesOptions(
+            continuation_mode=ContinuationMode.PREVIOUS_RESPONSE_ID,
+            reasoning_summary="detailed",
+            prompt_cache_key="session-123",
+            prompt_cache_options=PromptCacheOptions(mode="explicit", ttl="30m"),
+        )
+
+        llm = ChatCodex(
+            model="gpt-test",
+            api_key="access-token",
+            chatgpt_account_id="account-123",
+            store=True,
+            transport=transport,
+            responses_options=options,
+        )
+
+        assert llm._transport is transport
+        assert llm._responses_options is options
+
     def test_rejects_empty_account_id(self) -> None:
         with pytest.raises(ValueError, match="chatgpt_account_id"):
             ChatCodex(
@@ -127,6 +155,21 @@ class TestChatCodexFromCli:
         )
 
         assert llm._default_kwargs["reasoning_effort"] == "xhigh"
+
+    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    def test_forwards_responses_options(self, mock_client, tmp_path: Path) -> None:
+        transport = WebSocketResponsesTransport()
+        options = ResponsesOptions(reasoning_summary="auto")
+
+        llm = ChatCodex.from_cli(
+            model="gpt-test",
+            auth_path=_auth_file(tmp_path / "auth.json"),
+            transport=transport,
+            responses_options=options,
+        )
+
+        assert llm._transport is transport
+        assert llm._responses_options is options
 
     def test_reports_a_missing_login(self, tmp_path: Path) -> None:
         with pytest.raises(CodexCredentialsError, match="codex login"):

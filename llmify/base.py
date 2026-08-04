@@ -1,13 +1,13 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import Any, Literal, overload
+from typing import Any, overload
 
 import httpx
 from pydantic import BaseModel
 
 from llmify.messages import Message
 from llmify.retries import RetryCallback
-from llmify.tools import Tool
+from llmify.tools import Tool, ToolChoice
 from llmify.views import ChatInvokeCompletion, StreamEvent
 
 
@@ -99,6 +99,6 @@ class ChatModel(ABC):
         self,
         messages: list[Message],
         tools: list[Tool | dict] | None = None,
-        tool_choice: Literal["auto", "required", "none"] = "auto",
+        tool_choice: ToolChoice = "auto",
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]: ...
