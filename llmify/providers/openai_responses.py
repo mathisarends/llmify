@@ -98,7 +98,7 @@ class ChatOpenAIResponses(ChatModel):
             on_retry=on_retry,
             **kwargs,
         )
-        api_key = resolve_api_key(api_key, "OPENAI_API_KEY", "OpenAI")
+        api_key = self._resolve_api_key(api_key)
 
         self._store = store
         self._client = AsyncOpenAI(
@@ -108,6 +108,12 @@ class ChatOpenAIResponses(ChatModel):
             max_retries=0,
             default_headers=default_headers,
         )
+
+    def _resolve_api_key(
+        self,
+        api_key: str | Callable[[], Awaitable[str]] | None,
+    ) -> str | Callable[[], Awaitable[str]]:
+        return resolve_api_key(api_key, "OPENAI_API_KEY", "OpenAI")
 
     @overload
     async def invoke[T: BaseModel](

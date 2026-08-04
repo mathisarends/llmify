@@ -4,6 +4,7 @@ import pytest
 
 pytest.importorskip("openai")
 
+from llmify import ChatAzureOpenAIResponses
 from llmify.exceptions import (
     AuthenticationError,
     CredentialsUnavailableError,
@@ -71,6 +72,45 @@ class TestClientConfiguration:
         )
 
         assert client.call_args.kwargs["max_retries"] == 0
+
+    def test_azure_responses_client_configuration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-env-key")
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
+
+        model = ChatAzureOpenAIResponses(
+            model="deployment-name",
+            max_retries=4,
+            default_headers={"X-Test": "value"},
+        )
+
+        assert model._default_max_retries == 4
+        assert model._client.api_key == "azure-env-key"
+        assert model._client.max_retries == 0
+        assert str(model._client.base_url) == (
+            "https://example.openai.azure.com/openai/v1/"
+        )
+        assert model._client.default_headers["X-Test"] == "value"
+
+    def test_azure_responses_does_not_duplicate_v1_path(self) -> None:
+        model = ChatAzureOpenAIResponses(
+            model="deployment-name",
+            api_key="azure-key",
+            azure_endpoint="https://example.openai.azure.com/openai/v1/",
+        )
+
+        assert str(model._client.base_url) == (
+            "https://example.openai.azure.com/openai/v1/"
+        )
+
+    def test_azure_responses_requires_endpoint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+
+        with pytest.raises(ValueError, match="AZURE_OPENAI_ENDPOINT"):
+            ChatAzureOpenAIResponses(model="deployment-name", api_key="azure-key")
 
 
 class TestCredentialsUnavailableError:

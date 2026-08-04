@@ -530,6 +530,22 @@ llm = ChatAzureOpenAI(
 )
 ```
 
+For Azure's Responses API, use `ChatAzureOpenAIResponses`:
+
+```python
+from llmify import ChatAzureOpenAIResponses
+
+llm = ChatAzureOpenAIResponses(
+    model="my-gpt-deployment",
+    api_key="...",           # optional if AZURE_OPENAI_API_KEY is set
+    azure_endpoint="https://<resource>.openai.azure.com/",  # optional if env var is set
+    reasoning_effort="high",  # optional
+)
+```
+
+It provides the same `invoke`, `stream`, structured-output, and tool-calling
+interface as `ChatOpenAIResponses` and uses Azure's `/openai/v1/` endpoint.
+
 ### Anthropic
 
 ```python

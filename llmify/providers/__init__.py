@@ -21,6 +21,11 @@ def __getattr__(name: str):
 
         return ChatAzureOpenAI
 
+    if name == "ChatAzureOpenAIResponses":
+        from .azure import ChatAzureOpenAIResponses
+
+        return ChatAzureOpenAIResponses
+
     if name == "ChatCerebras":
         from .cerebras import ChatCerebras
 
@@ -62,6 +67,7 @@ def __getattr__(name: str):
 __all__ = [
     "ChatOpenAI",
     "ChatAzureOpenAI",
+    "ChatAzureOpenAIResponses",
     "ChatCerebras",
     "ChatCodex",
     "ChatOpenAIResponses",

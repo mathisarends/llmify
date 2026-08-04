@@ -41,7 +41,7 @@ from .tools import (
 if TYPE_CHECKING:
     from .auth import CodexCliAuth, CodexCredentials, CodexCredentialsError
     from .providers.openai import ChatOpenAI, OpenAIModel
-    from .providers.azure import ChatAzureOpenAI
+    from .providers.azure import ChatAzureOpenAI, ChatAzureOpenAIResponses
     from .providers.cerebras import ChatCerebras, CerebrasModel
     from .providers.codex import ChatCodex
     from .providers.openai_compatible import OpenAICompatible
@@ -65,6 +65,11 @@ def __getattr__(name: str):
         from .providers.azure import ChatAzureOpenAI
 
         return ChatAzureOpenAI
+
+    if name == "ChatAzureOpenAIResponses":
+        from .providers.azure import ChatAzureOpenAIResponses
+
+        return ChatAzureOpenAIResponses
 
     if name == "ChatCerebras":
         from .providers.cerebras import ChatCerebras
@@ -148,6 +153,7 @@ __all__ = [
     "ChatOpenAI",
     "OpenAIModel",
     "ChatAzureOpenAI",
+    "ChatAzureOpenAIResponses",
     "ChatCerebras",
     "CerebrasModel",
     "ChatCodex",
