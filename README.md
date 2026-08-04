@@ -53,14 +53,12 @@ pip install py-llmify[cerebras]    # Cerebras
 pip install py-llmify[anthropic]   # Anthropic (Claude)
 pip install py-llmify[google]      # Google Gemini
 pip install py-llmify[all]         # All providers
-pip install py-llmify[tokens]      # Token tracking + Tokenary cost calculation
 ```
 
-The `tokens` extra currently requires Python 3.13 because that is the minimum
-Python version supported by Tokenary. Extras can be combined, for example:
+Extras can be combined, for example:
 
 ```bash
-pip install py-llmify[openai,tokens]
+pip install py-llmify[openai,google]
 ```
 
 ## Quick Start
@@ -338,23 +336,11 @@ for a single call. Callback exceptions cancel the retry and propagate to the cal
 ### Token Usage Tracking
 
 Every response carries `usage`, and every provider exposes its model as `llm.model`.
-With the optional `py-llmify[tokens]` extra, a `TokenTracker` aggregates usage and
-Tokenary-backed USD costs across calls and providers:
 
 ```python
-from llmify.tokens import TokenTracker, calculate_cost
-
-tracker = TokenTracker()
-
 response = await llm.invoke([UserMessage(content="Hi")])
-tracker.add(response, model=llm.model)  # also accepts a StreamEnd or ChatInvokeUsage
-
-print(tracker.summary().total_tokens)       # UsageSummary over all entries
-print(tracker.cost_summary().total_cost)    # USD across models
-print(calculate_cost(response, model=llm.model).total_cost)  # single call
+print(response.usage)
 ```
-
-Full runnable example: `examples/token_tracking.py`
 
 ## Configuration
 
