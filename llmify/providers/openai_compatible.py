@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 
 from pydantic import BaseModel
 
@@ -40,7 +40,7 @@ from llmify.providers._openai_utils import (
     tool_schemas,
 )
 from llmify.retries import RetryCallback, retry_call, retry_stream
-from llmify.tools import Tool
+from llmify.tools import Tool, ToolChoice
 from llmify.views import (
     ChatInvokeCompletion,
     ChatInvokeUsage,
@@ -74,7 +74,7 @@ class OpenAICompatible(ChatModel):
         messages: list[Message],
         output_format: type[T] | None = None,
         tools: list[Tool | dict] | None = None,
-        tool_choice: Literal["auto", "required", "none"] = "auto",
+        tool_choice: ToolChoice = "auto",
         on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
@@ -128,7 +128,7 @@ class OpenAICompatible(ChatModel):
         messages: list[ChatCompletionMessageParam],
         tools: list[Tool | dict],
         params: dict[str, Any],
-        tool_choice: Literal["auto", "required", "none"] = "auto",
+        tool_choice: ToolChoice = "auto",
     ) -> ChatInvokeCompletion[str]:
         openai_tools = cast(list[ChatCompletionToolUnionParam], tool_schemas(tools))
         create = cast(Any, self._client.chat.completions.create)
@@ -169,7 +169,7 @@ class OpenAICompatible(ChatModel):
         self,
         messages: list[Message],
         tools: list[Tool | dict] | None = None,
-        tool_choice: Literal["auto", "required", "none"] = "auto",
+        tool_choice: ToolChoice = "auto",
         on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:

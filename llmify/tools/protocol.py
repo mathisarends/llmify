@@ -1,4 +1,6 @@
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
+
+type ToolChoice = Literal["auto", "required", "none"]
 
 
 @runtime_checkable

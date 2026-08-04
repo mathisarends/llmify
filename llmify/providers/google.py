@@ -2,7 +2,7 @@ import json
 import os
 from collections.abc import AsyncIterator
 from enum import StrEnum
-from typing import Any, Literal, cast, overload
+from typing import Any, cast, overload
 
 import httpx
 from pydantic import BaseModel
@@ -38,7 +38,7 @@ from llmify.messages import (
     UserMessage,
 )
 from llmify.retries import RetryCallback, retry_call, retry_stream
-from llmify.tools import Tool
+from llmify.tools import Tool, ToolChoice
 from llmify.views import (
     ChatInvokeCompletion,
     ChatInvokeUsage,
@@ -120,7 +120,7 @@ class ChatGoogle(ChatModel):
         messages: list[Message],
         output_format: type[T] | None = None,
         tools: list[Tool | dict[str, Any]] | None = None,
-        tool_choice: Literal["auto", "required", "none"] = "auto",
+        tool_choice: ToolChoice = "auto",
         on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
@@ -166,7 +166,7 @@ class ChatGoogle(ChatModel):
         self,
         messages: list[Message],
         tools: list[Tool | dict[str, Any]] | None = None,
-        tool_choice: Literal["auto", "required", "none"] = "auto",
+        tool_choice: ToolChoice = "auto",
         on_retry: RetryCallback | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
@@ -267,7 +267,7 @@ def _build_config(
     *,
     system_instruction: str | None = None,
     tools: list[Tool | dict[str, Any]] | None = None,
-    tool_choice: Literal["auto", "required", "none"] = "auto",
+    tool_choice: ToolChoice = "auto",
     output_format: type[BaseModel] | None = None,
 ) -> google_types.GenerateContentConfig | None:
     config: dict[str, Any] = {}
