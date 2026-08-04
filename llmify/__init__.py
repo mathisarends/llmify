@@ -214,6 +214,12 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def __dir__() -> list[str]:
+    # PEP 562: without this, the lazily exported names are invisible to dir()
+    # and therefore to REPL and IDE completion.
+    return sorted({*globals(), *__all__})
+
+
 __all__ = [
     "Message",
     "SystemMessage",
