@@ -1,4 +1,9 @@
 # tests/tools/test_function_tool.py
+from typing import Annotated
+
+import pytest
+from pydantic import Field
+
 from llmify.tools import FunctionTool, tool
 
 
@@ -76,6 +81,104 @@ class TestFunctionTool:
 
         assert "self" not in props
         assert "query" in props
+
+
+class TestTypeMapping:
+    @pytest.mark.parametrize(
+        ("annotation", "expected"),
+        [
+            (str, "string"),
+            (int, "integer"),
+            (float, "number"),
+            (bool, "boolean"),
+            (list, "array"),
+            (dict, "object"),
+        ],
+    )
+    def test_maps_builtin_types(self, annotation: type, expected: str) -> None:
+        def fn(value):
+            return value
+
+        fn.__annotations__ = {"value": annotation}
+
+        props = FunctionTool(fn).to_openai_schema()["function"]["parameters"][
+            "properties"
+        ]
+        assert props["value"]["type"] == expected
+
+    def test_maps_parameterised_list_to_array(self) -> None:
+        def fn(tags: list[str]) -> str:
+            return ", ".join(tags)
+
+        props = FunctionTool(fn).to_openai_schema()["function"]["parameters"][
+            "properties"
+        ]
+        assert props["tags"] == {"type": "array"}
+
+    def test_maps_parameterised_dict_to_object(self) -> None:
+        def fn(options: dict[str, int]) -> int:
+            return sum(options.values())
+
+        props = FunctionTool(fn).to_openai_schema()["function"]["parameters"][
+            "properties"
+        ]
+        assert props["options"] == {"type": "object"}
+
+    def test_falls_back_to_string_for_unknown_types(self) -> None:
+        class Custom:
+            pass
+
+        def fn(value: Custom) -> str:
+            return str(value)
+
+        props = FunctionTool(fn).to_openai_schema()["function"]["parameters"][
+            "properties"
+        ]
+        assert props["value"] == {"type": "string"}
+
+    def test_survives_unresolvable_annotations(self) -> None:
+        # A forward reference to a name that never materialises makes
+        # get_type_hints raise; the schema must still be generated.
+        def fn(value: "NeverDefined") -> str:  # noqa: F821
+            return value
+
+        props = FunctionTool(fn).to_openai_schema()["function"]["parameters"][
+            "properties"
+        ]
+        assert props["value"] == {"type": "string"}
+
+
+class TestAnnotatedDescriptions:
+    def test_picks_up_a_field_description(self) -> None:
+        def fn(city: Annotated[str, Field(description="City to look up")]) -> str:
+            return city
+
+        props = FunctionTool(fn).to_openai_schema()["function"]["parameters"][
+            "properties"
+        ]
+        assert props["city"]["description"] == "City to look up"
+        assert props["city"]["type"] == "string"
+
+    def test_ignores_metadata_without_a_description(self) -> None:
+        def fn(count: Annotated[int, "just a note"]) -> int:
+            return count
+
+        props = FunctionTool(fn).to_openai_schema()["function"]["parameters"][
+            "properties"
+        ]
+        assert props["count"] == {"type": "integer"}
+
+    def test_does_not_leak_a_description_between_parameters(self) -> None:
+        def fn(
+            city: Annotated[str, Field(description="City to look up")],
+            country: str,
+        ) -> str:
+            return f"{city}, {country}"
+
+        props = FunctionTool(fn).to_openai_schema()["function"]["parameters"][
+            "properties"
+        ]
+        assert "description" not in props["country"]
 
 
 class TestToolDecorator:
