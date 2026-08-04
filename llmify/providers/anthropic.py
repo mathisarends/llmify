@@ -85,6 +85,7 @@ class ChatAnthropic(ChatModel):
         self,
         model: str | AnthropicModel = "claude-sonnet-4-20250514",
         api_key: str | None = None,
+        client: AsyncAnthropic | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -114,6 +115,10 @@ class ChatAnthropic(ChatModel):
             on_retry=on_retry,
             **kwargs,
         )
+        if client is not None:
+            self._client = client
+            return
+
         if api_key is None:
             api_key = os.getenv("ANTHROPIC_API_KEY")
 

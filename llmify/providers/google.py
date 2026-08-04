@@ -66,6 +66,7 @@ class ChatGoogle(ChatModel):
         self,
         model: str | GoogleModel = "gemini-3.5-flash",
         api_key: str | None = None,
+        client: genai.Client | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -94,15 +95,18 @@ class ChatGoogle(ChatModel):
             on_retry=on_retry,
             **kwargs,
         )
-        if api_key is None:
-            api_key = os.getenv("GEMINI_API_KEY")
+        if client is None:
+            if api_key is None:
+                api_key = os.getenv("GEMINI_API_KEY")
 
-        self._client = genai.Client(
-            api_key=api_key,
-            http_options=google_types.HttpOptions(
-                retry_options=google_types.HttpRetryOptions(attempts=1)
-            ),
-        ).aio
+            client = genai.Client(
+                api_key=api_key,
+                http_options=google_types.HttpOptions(
+                    retry_options=google_types.HttpRetryOptions(attempts=1)
+                ),
+            )
+
+        self._client = client.aio
 
     @overload
     async def invoke[T: BaseModel](
