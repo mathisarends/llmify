@@ -37,6 +37,12 @@ class StreamTextDelta(BaseModel):
     delta: str
 
 
+class StreamProviderEvent(BaseModel):
+    """Extension point for provider-specific streaming events."""
+
+    type: str
+
+
 class StreamToolCall(BaseModel):
     """Emitted once a tool call's arguments JSON is fully assembled."""
 
@@ -54,4 +60,4 @@ class StreamEnd(BaseModel):
     completion: str = ""
 
 
-type StreamEvent = StreamTextDelta | StreamToolCall | StreamEnd
+type StreamEvent = StreamTextDelta | StreamProviderEvent | StreamToolCall | StreamEnd

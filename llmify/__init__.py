@@ -25,6 +25,7 @@ from .providers import (
     ChatInvokeCompletion,
     ChatInvokeUsage,
     StreamEventType,
+    StreamProviderEvent,
     StreamTextDelta,
     StreamToolCall,
     StreamEnd,
@@ -46,6 +47,25 @@ if TYPE_CHECKING:
     from .providers.codex import ChatCodex
     from .providers.openai_compatible import OpenAICompatible
     from .providers.openai_responses import ChatOpenAIResponses, ReasoningEffort
+    from .providers.openai_responses_transport import (
+        HTTPResponsesTransport,
+        ResponsesSession,
+        ResponsesTransport,
+        WebSocketResponsesTransport,
+    )
+    from .providers.openai_responses_types import (
+        ContinuationMode,
+        OpenAIResponsesCompletion,
+        OpenAIResponsesState,
+        OpenAIResponsesStreamEnd,
+        OpenAIResponsesStreamEventType,
+        OpenAIResponsesUsage,
+        PromptCacheOptions,
+        ResponsesOptions,
+        StreamOutputItemAdded,
+        StreamOutputItemDone,
+        StreamReasoningSummaryDelta,
+    )
     from .providers.anthropic import ChatAnthropic, AnthropicModel
     from .providers.google import ChatGoogle, GoogleModel
 
@@ -111,6 +131,33 @@ def __getattr__(name: str):
 
         return ReasoningEffort
 
+    if name in {
+        "ContinuationMode",
+        "OpenAIResponsesCompletion",
+        "OpenAIResponsesState",
+        "OpenAIResponsesStreamEnd",
+        "OpenAIResponsesStreamEventType",
+        "OpenAIResponsesUsage",
+        "PromptCacheOptions",
+        "ResponsesOptions",
+        "StreamOutputItemAdded",
+        "StreamOutputItemDone",
+        "StreamReasoningSummaryDelta",
+    }:
+        from .providers import openai_responses_types
+
+        return getattr(openai_responses_types, name)
+
+    if name in {
+        "HTTPResponsesTransport",
+        "ResponsesSession",
+        "ResponsesTransport",
+        "WebSocketResponsesTransport",
+    }:
+        from .providers import openai_responses_transport
+
+        return getattr(openai_responses_transport, name)
+
     if name == "OpenAICompatible":
         from .providers.openai_compatible import OpenAICompatible
 
@@ -162,6 +209,21 @@ __all__ = [
     "CodexCredentialsError",
     "ChatOpenAIResponses",
     "ReasoningEffort",
+    "ContinuationMode",
+    "OpenAIResponsesCompletion",
+    "OpenAIResponsesState",
+    "OpenAIResponsesStreamEnd",
+    "OpenAIResponsesStreamEventType",
+    "OpenAIResponsesUsage",
+    "PromptCacheOptions",
+    "ResponsesOptions",
+    "StreamOutputItemAdded",
+    "StreamOutputItemDone",
+    "StreamReasoningSummaryDelta",
+    "HTTPResponsesTransport",
+    "ResponsesSession",
+    "ResponsesTransport",
+    "WebSocketResponsesTransport",
     "ChatAnthropic",
     "AnthropicModel",
     "ChatGoogle",
@@ -171,6 +233,7 @@ __all__ = [
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
     "StreamEventType",
+    "StreamProviderEvent",
     "StreamTextDelta",
     "StreamToolCall",
     "StreamEnd",

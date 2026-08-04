@@ -435,6 +435,132 @@ await llm.invoke(messages, reasoning_effort="low")
 Which levels a model accepts differs — `"xhigh"` is limited to the newest
 reasoning models — and an unsupported level comes back as a request error.
 
+#### Native Responses state
+
+Responses calls return an `OpenAIResponsesCompletion` with an explicit,
+serializable `provider_state`. The state contains the response ID, the complete
+local replay window, and every native `response.output_item.done` item (including
+reasoning, messages, and function calls):
+
+```python
+from llmify import ChatOpenAIResponses, UserMessage
+
+llm = ChatOpenAIResponses(model="gpt-5.6", store=False)
+
+first = await llm.invoke([UserMessage(content="Inspect this problem")])
+second = await llm.invoke(
+    [UserMessage(content="Now refine the answer")],  # only new input
+    provider_state=first.provider_state,
+)
+```
+
+Stateless mode is the default. With `store=False`, encrypted reasoning is
+requested and replayed unchanged; it is opaque provider state, not readable
+chain-of-thought. Use `ContinuationMode.PREVIOUS_RESPONSE_ID` to send only new
+items when the previous response is available server-side. Instructions are
+retained locally and resent because `previous_response_id` does not carry them
+forward automatically.
+
+```python
+from llmify import ContinuationMode, ResponsesOptions
+
+llm = ChatOpenAIResponses(
+    model="gpt-5.6",
+    store=True,
+    responses_options=ResponsesOptions(
+        continuation_mode=ContinuationMode.PREVIOUS_RESPONSE_ID,
+    ),
+)
+```
+
+#### Complete local tool loop
+
+`invoke_with_tools` executes all function calls in a response, feeds every
+`function_call_output` back to the model, and repeats until a final answer is
+produced. FunctionTool exceptions become structured tool outputs so the model
+can recover. `max_tool_rounds` bounds the loop. Dict schemas and
+`RawSchemaTool` values need a `tool_executor` callback because they contain no
+implementation.
+
+```python
+from llmify import UserMessage, tool
+
+@tool
+def lookup(query: str) -> str:
+    return f"result for {query}"
+
+result = await llm.invoke_with_tools(
+    [UserMessage(content="Look up alpha and beta, then compare them")],
+    tools=[lookup],
+    max_tool_rounds=8,
+)
+```
+
+#### Reasoning summaries and native stream events
+
+Set `reasoning_summary="auto"`, `"concise"`, or `"detailed"`. Summaries arrive
+as `StreamReasoningSummaryDelta` and are never mixed into `StreamTextDelta`.
+Responses streams also expose `StreamOutputItemAdded` and
+`StreamOutputItemDone`; the final `OpenAIResponsesStreamEnd` always carries the
+assembled provider state. These Responses-only events extend the neutral
+`StreamProviderEvent` hook rather than changing other providers' event models.
+
+Usage is returned as `OpenAIResponsesUsage`, adding `reasoning_tokens` and
+`prompt_cache_write_tokens` to the common token fields.
+
+#### Prompt caching
+
+Use a stable `prompt_cache_key`; keep instructions and tool definitions stable
+and ordered. On models supporting explicit breakpoints, `cache=True` marks the
+end of a message as reusable provider input:
+
+```python
+from llmify import PromptCacheOptions, ResponsesOptions, SystemMessage
+
+options = ResponsesOptions(
+    prompt_cache_key="tenant:acme:agent-v1",
+    prompt_cache_options=PromptCacheOptions(mode="explicit", ttl="30m"),
+)
+llm = ChatOpenAIResponses(model="gpt-5.6", responses_options=options)
+messages = [SystemMessage(content=large_stable_instructions, cache=True)]
+```
+
+Explicit cache options and breakpoints are model-dependent; older models can
+reject them. Automatic prompt caching remains available without these options.
+
+#### WebSocket transport
+
+Install the optional transport dependency and select it explicitly:
+
+```console
+pip install "py-llmify[websocket]"
+```
+
+```python
+from llmify import ResponsesOptions, WebSocketResponsesTransport
+
+llm = ChatOpenAIResponses(
+    model="gpt-5.6",
+    transport=WebSocketResponsesTransport(),
+    responses_options=ResponsesOptions(
+        continuation_mode="previous_response_id",
+    ),
+)
+```
+
+HTTP/SSE remains the default. A WebSocket `invoke_with_tools` call keeps one
+connection open across all model/tool rounds and sends incremental tool outputs
+with `previous_response_id`. A standalone WebSocket `invoke` opens one scoped
+connection; when `store=False`, a later standalone invocation safely falls back
+to the state's full local replay window because connection-local state no longer
+exists.
+
+Transport is a port, not a mode flag. `HTTPResponsesTransport` is the default,
+`WebSocketResponsesTransport` is opt-in, and custom implementations can provide
+the `ResponsesTransport`/`ResponsesSession` protocols for testing or alternate
+wire transports. Continuation knowledge remains scoped to the session that owns
+it.
+
 ### Codex
 
 ```python

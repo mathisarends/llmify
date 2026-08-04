@@ -3,6 +3,7 @@ from llmify.views import (
     ChatInvokeCompletion,
     ChatInvokeUsage,
     StreamEventType,
+    StreamProviderEvent,
     StreamTextDelta,
     StreamToolCall,
     StreamEnd,
@@ -46,6 +47,33 @@ def __getattr__(name: str):
 
         return ReasoningEffort
 
+    if name in {
+        "ContinuationMode",
+        "OpenAIResponsesCompletion",
+        "OpenAIResponsesState",
+        "OpenAIResponsesStreamEnd",
+        "OpenAIResponsesStreamEventType",
+        "OpenAIResponsesUsage",
+        "PromptCacheOptions",
+        "ResponsesOptions",
+        "StreamOutputItemAdded",
+        "StreamOutputItemDone",
+        "StreamReasoningSummaryDelta",
+    }:
+        from . import openai_responses_types
+
+        return getattr(openai_responses_types, name)
+
+    if name in {
+        "HTTPResponsesTransport",
+        "ResponsesSession",
+        "ResponsesTransport",
+        "WebSocketResponsesTransport",
+    }:
+        from . import openai_responses_transport
+
+        return getattr(openai_responses_transport, name)
+
     if name == "OpenAICompatible":
         from .openai_compatible import OpenAICompatible
 
@@ -72,6 +100,21 @@ __all__ = [
     "ChatCodex",
     "ChatOpenAIResponses",
     "ReasoningEffort",
+    "ContinuationMode",
+    "OpenAIResponsesCompletion",
+    "OpenAIResponsesState",
+    "OpenAIResponsesStreamEnd",
+    "OpenAIResponsesStreamEventType",
+    "OpenAIResponsesUsage",
+    "PromptCacheOptions",
+    "ResponsesOptions",
+    "StreamOutputItemAdded",
+    "StreamOutputItemDone",
+    "StreamReasoningSummaryDelta",
+    "HTTPResponsesTransport",
+    "ResponsesSession",
+    "ResponsesTransport",
+    "WebSocketResponsesTransport",
     "ChatAnthropic",
     "ChatGoogle",
     "ChatModel",
@@ -79,6 +122,7 @@ __all__ = [
     "ChatInvokeCompletion",
     "ChatInvokeUsage",
     "StreamEventType",
+    "StreamProviderEvent",
     "StreamTextDelta",
     "StreamToolCall",
     "StreamEnd",
