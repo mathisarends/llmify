@@ -67,7 +67,17 @@ if TYPE_CHECKING:
         StreamReasoningSummaryDelta,
     )
     from .providers.anthropic import ChatAnthropic, AnthropicModel
+    from .providers.anthropic_types import (
+        AnthropicCompletion,
+        AnthropicStreamEnd,
+        AnthropicUsage,
+    )
     from .providers.google import ChatGoogle, GoogleModel
+    from .providers.google_types import (
+        GoogleCompletion,
+        GoogleStreamEnd,
+        GoogleUsage,
+    )
 
 
 def __getattr__(name: str):
@@ -173,6 +183,15 @@ def __getattr__(name: str):
 
         return AnthropicModel
 
+    if name in {
+        "AnthropicCompletion",
+        "AnthropicStreamEnd",
+        "AnthropicUsage",
+    }:
+        from .providers import anthropic_types
+
+        return getattr(anthropic_types, name)
+
     if name == "ChatGoogle":
         from .providers.google import ChatGoogle
 
@@ -182,6 +201,15 @@ def __getattr__(name: str):
         from .providers.google import GoogleModel
 
         return GoogleModel
+
+    if name in {
+        "GoogleCompletion",
+        "GoogleStreamEnd",
+        "GoogleUsage",
+    }:
+        from .providers import google_types
+
+        return getattr(google_types, name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -226,8 +254,14 @@ __all__ = [
     "WebSocketResponsesTransport",
     "ChatAnthropic",
     "AnthropicModel",
+    "AnthropicCompletion",
+    "AnthropicStreamEnd",
+    "AnthropicUsage",
     "ChatGoogle",
     "GoogleModel",
+    "GoogleCompletion",
+    "GoogleStreamEnd",
+    "GoogleUsage",
     "ChatModel",
     "OpenAICompatible",
     "ChatInvokeCompletion",

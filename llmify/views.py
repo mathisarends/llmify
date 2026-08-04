@@ -7,12 +7,15 @@ from llmify.messages import ToolCall
 
 
 class ChatInvokeUsage(BaseModel):
+    """Token usage every provider reports.
+
+    Providers with extra counters subclass this (see ``AnthropicUsage``,
+    ``GoogleUsage``, ``OpenAIResponsesUsage``) instead of adding fields here
+    that only one backend ever fills.
+    """
+
     prompt_tokens: int
     prompt_cached_tokens: int | None = None
-    prompt_cache_creation_tokens: int | None = None
-    """Anthropic only: The number of tokens used to create the cache."""
-    prompt_image_tokens: int | None = None
-    """Google only: The number of tokens in the image."""
     completion_tokens: int
     total_tokens: int
 

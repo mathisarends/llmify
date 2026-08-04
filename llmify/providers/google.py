@@ -37,16 +37,15 @@ from llmify.messages import (
     ToolResultMessage,
     UserMessage,
 )
+from llmify.providers.google_types import (
+    GoogleCompletion,
+    GoogleStreamEnd,
+    GoogleStreamEvent,
+    GoogleUsage,
+)
 from llmify.retries import RetryCallback, retry_call, retry_stream
 from llmify.tools import Tool, ToolChoice
-from llmify.views import (
-    ChatInvokeCompletion,
-    ChatInvokeUsage,
-    StreamEnd,
-    StreamEvent,
-    StreamTextDelta,
-    StreamToolCall,
-)
+from llmify.views import StreamTextDelta, StreamToolCall
 
 
 class GoogleModel(StrEnum):
@@ -108,12 +107,12 @@ class ChatGoogle(ChatModel):
     @overload
     async def invoke[T: BaseModel](
         self, messages: list[Message], output_format: type[T], **kwargs: Any
-    ) -> ChatInvokeCompletion[T]: ...
+    ) -> GoogleCompletion[T]: ...
 
     @overload
     async def invoke(
         self, messages: list[Message], output_format: None = None, **kwargs: Any
-    ) -> ChatInvokeCompletion[str]: ...
+    ) -> GoogleCompletion[str]: ...
 
     async def invoke[T: BaseModel](
         self,
@@ -123,8 +122,8 @@ class ChatGoogle(ChatModel):
         tool_choice: ToolChoice = "auto",
         on_retry: RetryCallback | None = None,
         **kwargs: Any,
-    ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
-        async def invoke_once() -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
+    ) -> GoogleCompletion[T] | GoogleCompletion[str]:
+        async def invoke_once() -> GoogleCompletion[T] | GoogleCompletion[str]:
             contents, system_instruction = _convert_messages(messages)
             config = _build_config(
                 self._merge_params(kwargs),
@@ -140,7 +139,7 @@ class ChatGoogle(ChatModel):
             )
 
             if output_format is not None:
-                return ChatInvokeCompletion(
+                return GoogleCompletion(
                     completion=output_format.model_validate_json(
                         _parse_text(response) or "{}"
                     ),
@@ -148,7 +147,7 @@ class ChatGoogle(ChatModel):
                     usage=_parse_usage(response.usage_metadata),
                 )
 
-            return ChatInvokeCompletion(
+            return GoogleCompletion(
                 completion=_parse_text(response),
                 tool_calls=_parse_tool_calls(response),
                 stop_reason=_stop_reason(response),
@@ -169,7 +168,7 @@ class ChatGoogle(ChatModel):
         tool_choice: ToolChoice = "auto",
         on_retry: RetryCallback | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> AsyncIterator[GoogleStreamEvent]:
         contents, system_instruction = _convert_messages(messages)
         config = _build_config(
             self._merge_params(kwargs),
@@ -190,7 +189,7 @@ class ChatGoogle(ChatModel):
         self,
         contents: list[dict[str, Any]],
         config: google_types.GenerateContentConfig | None,
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> AsyncIterator[GoogleStreamEvent]:
         stream = await self._client.models.generate_content_stream(
             model=self._model,
             contents=contents,
@@ -200,7 +199,7 @@ class ChatGoogle(ChatModel):
         text_acc: list[str] = []
         tool_calls: list[ToolCall] = []
         stop_reason: str | None = None
-        usage: ChatInvokeUsage | None = None
+        usage: GoogleUsage | None = None
 
         async for chunk in stream:
             chunk_text = _parse_text(chunk)
@@ -217,7 +216,7 @@ class ChatGoogle(ChatModel):
             if chunk_usage is not None:
                 usage = chunk_usage
 
-        yield StreamEnd(
+        yield GoogleStreamEnd(
             stop_reason=stop_reason,
             usage=usage,
             tool_calls=tool_calls,
@@ -478,7 +477,7 @@ def _parse_function_call(
 
 def _parse_usage(
     usage: google_types.GenerateContentResponseUsageMetadata | None,
-) -> ChatInvokeUsage | None:
+) -> GoogleUsage | None:
     if usage is None:
         return None
 
@@ -488,7 +487,7 @@ def _parse_usage(
     if total_tokens is None:
         total_tokens = prompt_tokens + completion_tokens
 
-    return ChatInvokeUsage(
+    return GoogleUsage(
         prompt_tokens=prompt_tokens,
         prompt_cached_tokens=usage.cached_content_token_count,
         prompt_image_tokens=_image_token_count(usage),

@@ -25,7 +25,7 @@ try:
     )
     from anthropic.types import Message as AnthropicMessage
     from anthropic.types import ToolChoiceParam, ToolUnionParam
-    from anthropic.types import Usage as AnthropicUsage
+    from anthropic.types import Usage as _AnthropicSDKUsage
     from anthropic.types.message_create_params import (
         MessageCreateParamsNonStreaming,
     )
@@ -55,16 +55,15 @@ from llmify.messages import (
     ToolResultMessage,
     UserMessage,
 )
+from llmify.providers.anthropic_types import (
+    AnthropicCompletion,
+    AnthropicStreamEnd,
+    AnthropicStreamEvent,
+    AnthropicUsage,
+)
 from llmify.retries import RetryCallback, retry_call, retry_stream
 from llmify.tools import Tool, ToolChoice
-from llmify.views import (
-    ChatInvokeCompletion,
-    ChatInvokeUsage,
-    StreamEnd,
-    StreamEvent,
-    StreamTextDelta,
-    StreamToolCall,
-)
+from llmify.views import StreamTextDelta, StreamToolCall
 
 
 class AnthropicModel(StrEnum):
@@ -128,12 +127,12 @@ class ChatAnthropic(ChatModel):
     @overload
     async def invoke[T: BaseModel](
         self, messages: list[Message], output_format: type[T], **kwargs: Any
-    ) -> ChatInvokeCompletion[T]: ...
+    ) -> AnthropicCompletion[T]: ...
 
     @overload
     async def invoke(
         self, messages: list[Message], output_format: None = None, **kwargs: Any
-    ) -> ChatInvokeCompletion[str]: ...
+    ) -> AnthropicCompletion[str]: ...
 
     async def invoke[T: BaseModel](
         self,
@@ -143,8 +142,8 @@ class ChatAnthropic(ChatModel):
         tool_choice: ToolChoice = "auto",
         on_retry: RetryCallback | None = None,
         **kwargs: Any,
-    ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
-        async def invoke_once() -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
+    ) -> AnthropicCompletion[T] | AnthropicCompletion[str]:
+        async def invoke_once() -> AnthropicCompletion[T] | AnthropicCompletion[str]:
             params = _build_params(self._model, messages, self._merge_params(kwargs))
 
             if output_format is not None:
@@ -162,9 +161,9 @@ class ChatAnthropic(ChatModel):
             map_error=_map_anthropic_error,
         )
 
-    async def _invoke_plain(self, params: dict[str, Any]) -> ChatInvokeCompletion[str]:
+    async def _invoke_plain(self, params: dict[str, Any]) -> AnthropicCompletion[str]:
         response: AnthropicMessage = await self._client.messages.create(**params)
-        return ChatInvokeCompletion(
+        return AnthropicCompletion(
             completion=_extract_text(response),
             stop_reason=response.stop_reason,
             usage=_parse_usage(response.usage),
@@ -175,7 +174,7 @@ class ChatAnthropic(ChatModel):
         params: dict[str, Any],
         tools: list[Tool | dict],
         tool_choice: ToolChoice = "auto",
-    ) -> ChatInvokeCompletion[str]:
+    ) -> AnthropicCompletion[str]:
         anthropic_tools = _convert_tools(tools)
         tool_choice_map: dict[ToolChoice, ToolChoiceParam] = {
             "auto": {"type": "auto"},
@@ -191,7 +190,7 @@ class ChatAnthropic(ChatModel):
             },
         )
         response: AnthropicMessage = await self._client.messages.create(**request)
-        return ChatInvokeCompletion(
+        return AnthropicCompletion(
             completion=_extract_text(response),
             tool_calls=_parse_tool_calls(response),
             stop_reason=response.stop_reason,
@@ -200,7 +199,7 @@ class ChatAnthropic(ChatModel):
 
     async def _invoke_with_structured_output[T: BaseModel](
         self, params: dict[str, Any], output_format: type[T]
-    ) -> ChatInvokeCompletion[T]:
+    ) -> AnthropicCompletion[T]:
         schema = output_format.model_json_schema()
         tool_def = {
             "name": "structured_output",
@@ -222,7 +221,7 @@ class ChatAnthropic(ChatModel):
         for block in response.content:
             if block.type == "tool_use" and block.name == "structured_output":
                 parsed = output_format.model_validate(block.input)
-                return ChatInvokeCompletion(
+                return AnthropicCompletion(
                     completion=parsed,
                     stop_reason=response.stop_reason,
                     usage=_parse_usage(response.usage),
@@ -237,7 +236,7 @@ class ChatAnthropic(ChatModel):
         tool_choice: ToolChoice = "auto",
         on_retry: RetryCallback | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> AsyncIterator[AnthropicStreamEvent]:
         params = _build_params(self._model, messages, self._merge_params(kwargs))
 
         anthropic_tools = _convert_tools(tools or [])
@@ -257,7 +256,9 @@ class ChatAnthropic(ChatModel):
         ):
             yield event
 
-    async def _stream_once(self, params: dict[str, Any]) -> AsyncIterator[StreamEvent]:
+    async def _stream_once(
+        self, params: dict[str, Any]
+    ) -> AsyncIterator[AnthropicStreamEvent]:
         blocks: dict[int, dict[str, str]] = {}
         text_acc: list[str] = []
         stop_reason: str | None = None
@@ -316,9 +317,9 @@ class ChatAnthropic(ChatModel):
                     saw_usage = True
                     output_tokens = event.usage.output_tokens
 
-        usage_view: ChatInvokeUsage | None = None
+        usage_view: AnthropicUsage | None = None
         if saw_usage:
-            usage_view = ChatInvokeUsage(
+            usage_view = AnthropicUsage(
                 prompt_tokens=input_tokens,
                 completion_tokens=output_tokens,
                 total_tokens=input_tokens + output_tokens,
@@ -326,7 +327,7 @@ class ChatAnthropic(ChatModel):
                 prompt_cache_creation_tokens=cache_creation_tokens,
             )
 
-        yield StreamEnd(
+        yield AnthropicStreamEnd(
             stop_reason=stop_reason,
             usage=usage_view,
             tool_calls=[
@@ -535,8 +536,8 @@ def _parse_tool_calls(response: AnthropicMessage) -> list[ToolCall]:
     ]
 
 
-def _parse_usage(usage: AnthropicUsage) -> ChatInvokeUsage:
-    return ChatInvokeUsage(
+def _parse_usage(usage: _AnthropicSDKUsage) -> AnthropicUsage:
+    return AnthropicUsage(
         prompt_tokens=usage.input_tokens,
         completion_tokens=usage.output_tokens,
         total_tokens=usage.input_tokens + usage.output_tokens,

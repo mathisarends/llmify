@@ -342,6 +342,22 @@ response = await llm.invoke([UserMessage(content="Hi")])
 print(response.usage)
 ```
 
+`ChatInvokeUsage` holds only the counters every provider reports —
+`prompt_tokens`, `prompt_cached_tokens`, `completion_tokens`, `total_tokens`.
+Providers that report more return a subclass, so backend-specific counters never
+leak into the shared model:
+
+| Provider | Usage type | Extra fields |
+| --- | --- | --- |
+| Anthropic | `AnthropicUsage` | `prompt_cache_creation_tokens` |
+| Google | `GoogleUsage` | `prompt_image_tokens` |
+| OpenAI Responses | `OpenAIResponsesUsage` | `prompt_cache_write_tokens`, `reasoning_tokens` |
+
+The matching completion and stream-end types (`AnthropicCompletion` /
+`AnthropicStreamEnd`, `GoogleCompletion` / `GoogleStreamEnd`, and the
+`OpenAIResponses*` pair) narrow `usage` to the provider's type, so the extra
+fields are visible to type checkers without a cast.
+
 ## Configuration
 
 ### Environment Variables
@@ -671,6 +687,10 @@ llm = ChatAnthropic(
 
 The Anthropic provider supports the same API surface — `invoke`, `stream`, structured output, and tool calling — all mapped to the Anthropic messages API under the hood.
 
+`invoke` returns an `AnthropicCompletion` and `stream` ends with an
+`AnthropicStreamEnd`; both carry `AnthropicUsage`, which adds
+`prompt_cache_creation_tokens` to the common token fields.
+
 ### Cerebras
 
 ```python
@@ -696,6 +716,10 @@ llm = ChatGoogle(
 ```
 
 The Google provider supports the same API surface: `invoke`, `stream`, structured output, and tool calling.
+
+`invoke` returns a `GoogleCompletion` and `stream` ends with a
+`GoogleStreamEnd`; both carry `GoogleUsage`, which adds `prompt_image_tokens`
+to the common token fields.
 
 ## Credits
 

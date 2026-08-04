@@ -84,10 +84,28 @@ def __getattr__(name: str):
 
         return ChatAnthropic
 
+    if name in {
+        "AnthropicCompletion",
+        "AnthropicStreamEnd",
+        "AnthropicUsage",
+    }:
+        from . import anthropic_types
+
+        return getattr(anthropic_types, name)
+
     if name == "ChatGoogle":
         from .google import ChatGoogle
 
         return ChatGoogle
+
+    if name in {
+        "GoogleCompletion",
+        "GoogleStreamEnd",
+        "GoogleUsage",
+    }:
+        from . import google_types
+
+        return getattr(google_types, name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -116,7 +134,13 @@ __all__ = [
     "ResponsesTransport",
     "WebSocketResponsesTransport",
     "ChatAnthropic",
+    "AnthropicCompletion",
+    "AnthropicStreamEnd",
+    "AnthropicUsage",
     "ChatGoogle",
+    "GoogleCompletion",
+    "GoogleStreamEnd",
+    "GoogleUsage",
     "ChatModel",
     "OpenAICompatible",
     "ChatInvokeCompletion",
