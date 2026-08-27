@@ -446,6 +446,29 @@ class _ConnectionManager:
 
 class TestWebSocketTransport:
     @pytest.mark.asyncio
+    async def test_model_prewarm_resolves_auth_before_handshake(self) -> None:
+        api_key = AsyncMock(return_value="dynamic-token")
+        connection = SimpleNamespace(send=AsyncMock(), recv=AsyncMock())
+        manager = _ConnectionManager(connection)
+        model = ChatOpenAIResponses(
+            model="gpt-test",
+            api_key=api_key,
+            transport=WebSocketResponsesTransport(),
+        )
+        model._client.responses.connect = Mock(return_value=manager)
+
+        await model.prewarm()
+
+        assert model.is_prewarmed is True
+        api_key.assert_awaited_once_with()
+        headers = model._client.responses.connect.call_args.kwargs["extra_headers"]
+        assert headers["Authorization"] == "Bearer dynamic-token"
+        connection.send.assert_not_awaited()
+
+        await model.close_prewarmed()
+        assert model.is_prewarmed is False
+
+    @pytest.mark.asyncio
     async def test_resolves_dynamic_auth_and_forwards_default_headers(self) -> None:
         api_key = AsyncMock(return_value="dynamic-token")
         connection = SimpleNamespace(

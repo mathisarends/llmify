@@ -2,7 +2,7 @@ import inspect
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, Self, cast, overload
 
 import httpx
 from pydantic import BaseModel
@@ -47,6 +47,10 @@ from llmify.providers._openai_utils import (
     tool_call,
     tool_schemas,
 )
+from llmify.retries import RetryCallback, retry_call, retry_stream
+from llmify.tools import Tool, ToolChoice
+from llmify.views import StreamTextDelta, StreamToolCall
+
 from .transport import (
     HTTPResponsesTransport,
     ResponsesSession,
@@ -67,9 +71,6 @@ from .types import (
     StreamOutputItemDone,
     StreamReasoningSummaryDelta,
 )
-from llmify.retries import RetryCallback, retry_call, retry_stream
-from llmify.tools import Tool, ToolChoice
-from llmify.views import StreamTextDelta, StreamToolCall
 
 _CHAT_ONLY_PARAMS = frozenset(
     {"frequency_penalty", "presence_penalty", "stop", "seed", "response_format"}
@@ -140,6 +141,41 @@ class ChatOpenAIResponses(ChatModel):
             max_retries=0,
             default_headers=default_headers,
         )
+
+    @property
+    def is_prewarmed(self) -> bool:
+        """Whether this model has an open prewarmed WebSocket connection."""
+        if not isinstance(self._transport, WebSocketResponsesTransport):
+            return False
+        return self._transport.is_prewarmed
+
+    async def prewarm(self) -> None:
+        """Open the configured WebSocket before a latency-critical request.
+
+        No model request or input is sent. The connection stays available for
+        sequential ``invoke()`` and ``stream()`` calls until ``aclose()`` or
+        ``close_prewarmed()`` is called.
+        """
+        if not isinstance(self._transport, WebSocketResponsesTransport):
+            raise LLMifyError("Prewarming requires WebSocketResponsesTransport.")
+        await self._resolve_websocket_api_key()
+        await self._transport.prewarm(self._client)
+
+    async def close_prewarmed(self) -> None:
+        """Close the retained WebSocket while keeping this model reusable."""
+        if isinstance(self._transport, WebSocketResponsesTransport):
+            await self._transport.aclose()
+
+    async def aclose(self) -> None:
+        """Close the prewarmed WebSocket and the underlying OpenAI client."""
+        await self.close_prewarmed()
+        await self._client.close()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        await self.aclose()
 
     def _resolve_api_key(
         self,
@@ -362,13 +398,15 @@ class ChatOpenAIResponses(ChatModel):
 
     @asynccontextmanager
     async def _transport_session(self) -> AsyncGenerator[ResponsesSession, None]:
-        if isinstance(self._transport, WebSocketResponsesTransport) and callable(
-            self._api_key
-        ):
-            self._client.api_key = await self._api_key()
+        if isinstance(self._transport, WebSocketResponsesTransport):
+            await self._resolve_websocket_api_key()
 
         async with self._transport.session(self._client) as session:
             yield session
+
+    async def _resolve_websocket_api_key(self) -> None:
+        if callable(self._api_key):
+            self._client.api_key = await self._api_key()
 
     async def _stream_once(
         self,
