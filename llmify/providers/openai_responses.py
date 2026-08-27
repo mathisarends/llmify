@@ -1,6 +1,7 @@
 import inspect
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any, Literal, cast, overload
 
 import httpx
@@ -50,6 +51,7 @@ from llmify.providers.openai_responses_transport import (
     HTTPResponsesTransport,
     ResponsesSession,
     ResponsesTransport,
+    WebSocketResponsesTransport,
 )
 from llmify.providers.openai_responses_types import (
     ContinuationMode,
@@ -121,6 +123,7 @@ class ChatOpenAIResponses(ChatModel):
         )
         api_key = self._resolve_api_key(api_key)
 
+        self._api_key = api_key
         self._store = store
         self._transport = transport or HTTPResponsesTransport()
         self._responses_options = responses_options or ResponsesOptions(
@@ -181,7 +184,7 @@ class ChatOpenAIResponses(ChatModel):
     ) -> OpenAIResponsesCompletion[T] | OpenAIResponsesCompletion[str]:
         reject_stream_parameter(kwargs)
         options = responses_options or self._responses_options
-        async with self._transport.session(self._client) as session:
+        async with self._transport_session() as session:
             end = await self._collect(
                 messages,
                 tools=tools,
@@ -227,7 +230,7 @@ class ChatOpenAIResponses(ChatModel):
         all_tool_calls: list[ToolCall] = []
         total_usage: OpenAIResponsesUsage | None = None
 
-        async with self._transport.session(self._client) as session:
+        async with self._transport_session() as session:
             for round_index in range(max_tool_rounds + 1):
                 end = await self._collect(
                     next_messages,
@@ -339,7 +342,7 @@ class ChatOpenAIResponses(ChatModel):
         text: dict[str, Any] | None = None,
         on_retry: RetryCallback | None = None,
     ) -> AsyncIterator[OpenAIResponsesStreamEvent]:
-        async with self._transport.session(self._client) as session:
+        async with self._transport_session() as session:
             async for event in retry_stream(
                 lambda: self._stream_once(
                     messages,
@@ -356,6 +359,16 @@ class ChatOpenAIResponses(ChatModel):
                 map_error=map_openai_error,
             ):
                 yield event
+
+    @asynccontextmanager
+    async def _transport_session(self) -> AsyncGenerator[ResponsesSession, None]:
+        if isinstance(self._transport, WebSocketResponsesTransport) and callable(
+            self._api_key
+        ):
+            self._client.api_key = await self._api_key()
+
+        async with self._transport.session(self._client) as session:
+            yield session
 
     async def _stream_once(
         self,

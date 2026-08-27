@@ -53,7 +53,7 @@ class WebSocketResponsesTransport:
                 "Install py-llmify[websocket]."
             )
 
-        extra_headers = await _websocket_headers(client)
+        extra_headers = _websocket_headers(client)
         try:
             async with connect(extra_headers=extra_headers) as connection:
                 yield _WebSocketResponsesSession(connection)
@@ -66,9 +66,8 @@ class WebSocketResponsesTransport:
             ) from exc
 
 
-async def _websocket_headers(client: AsyncOpenAI) -> dict[str, str]:
-    """Resolve dynamic credentials and forward client headers to the handshake."""
-    await client._refresh_api_key()
+def _websocket_headers(client: AsyncOpenAI) -> dict[str, str]:
+    """Forward resolved authentication and client headers to the handshake."""
     headers = {**client.auth_headers, **client.default_headers}
     return {
         key: value
