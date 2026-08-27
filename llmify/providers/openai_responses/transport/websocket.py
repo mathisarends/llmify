@@ -1,6 +1,8 @@
+"""Persistent WebSocket transport for the Responses API."""
+
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Any, Protocol, runtime_checkable
+from contextlib import asynccontextmanager
+from typing import Any
 
 from openai import AsyncOpenAI, OpenAIError
 from openai.types.responses import (
@@ -12,33 +14,7 @@ from openai.types.responses import (
 
 from llmify.exceptions import LLMifyError
 
-
-@runtime_checkable
-class ResponsesSession(Protocol):
-    """One transport-scoped Responses conversation session."""
-
-    def events(self, request: dict[str, Any]) -> AsyncIterator[Any]: ...
-
-    def can_continue_from(self, response_id: str) -> bool: ...
-
-    def remember(self, response_id: str) -> None: ...
-
-
-@runtime_checkable
-class ResponsesTransport(Protocol):
-    """Port for opening an HTTP or persistent WebSocket Responses session."""
-
-    def session(
-        self, client: AsyncOpenAI
-    ) -> AbstractAsyncContextManager[ResponsesSession]: ...
-
-
-class HTTPResponsesTransport:
-    @asynccontextmanager
-    async def session(
-        self, client: AsyncOpenAI
-    ) -> AsyncGenerator[ResponsesSession, None]:
-        yield _HTTPResponsesSession(client)
+from .base import ResponsesSession
 
 
 class WebSocketResponsesTransport:
@@ -76,22 +52,6 @@ def _websocket_headers(client: AsyncOpenAI) -> dict[str, str]:
     }
 
 
-class _HTTPResponsesSession:
-    def __init__(self, client: AsyncOpenAI) -> None:
-        self._client = client
-
-    async def events(self, request: dict[str, Any]) -> AsyncIterator[Any]:
-        stream = await self._client.responses.create(**_http_request(request))
-        async for event in stream:
-            yield event
-
-    def can_continue_from(self, response_id: str) -> bool:
-        return False
-
-    def remember(self, response_id: str) -> None:
-        pass
-
-
 class _WebSocketResponsesSession:
     def __init__(self, connection: Any) -> None:
         self._connection = connection
@@ -125,13 +85,3 @@ class _WebSocketResponsesSession:
 
     def remember(self, response_id: str) -> None:
         self._response_ids.add(response_id)
-
-
-def _http_request(request: dict[str, Any]) -> dict[str, Any]:
-    request = {**request, "stream": True}
-    prompt_cache_options = request.pop("prompt_cache_options", None)
-    if prompt_cache_options is not None:
-        extra_body = dict(request.get("extra_body") or {})
-        extra_body["prompt_cache_options"] = prompt_cache_options
-        request["extra_body"] = extra_body
-    return request
