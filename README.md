@@ -643,8 +643,9 @@ it directly.
 A missing or unusable login raises `CodexCredentialsError`, a subclass of
 `CredentialsUnavailableError`.
 
-Full runnable examples: `examples/providers/borrowed_codex.py` and
-`examples/providers/codex_cli_auth.py`
+Full runnable examples: `examples/providers/codex/from_cli.py`,
+`examples/providers/codex/manual_cli_auth.py`, and
+`examples/providers/codex/responses_websocket.py`
 
 ### Azure OpenAI
 
