@@ -446,6 +446,30 @@ class _ConnectionManager:
 
 class TestWebSocketTransport:
     @pytest.mark.asyncio
+    async def test_resolves_dynamic_auth_and_forwards_default_headers(self) -> None:
+        api_key = AsyncMock(return_value="dynamic-token")
+        connection = SimpleNamespace(
+            send=AsyncMock(),
+            recv=AsyncMock(side_effect=[_completed(_response("resp_1"), 0)]),
+        )
+        model = ChatOpenAIResponses(
+            model="gpt-test",
+            api_key=api_key,
+            default_headers={"ChatGPT-Account-Id": "acct-123"},
+            transport=WebSocketResponsesTransport(),
+        )
+        model._client.responses.connect = Mock(
+            return_value=_ConnectionManager(connection)
+        )
+
+        await model.invoke([UserMessage(content="Hi")])
+
+        api_key.assert_awaited_once_with()
+        headers = model._client.responses.connect.call_args.kwargs["extra_headers"]
+        assert headers["Authorization"] == "Bearer dynamic-token"
+        assert headers["ChatGPT-Account-Id"] == "acct-123"
+
+    @pytest.mark.asyncio
     async def test_uses_response_create_without_http_stream_fields(self) -> None:
         connection = SimpleNamespace(
             send=AsyncMock(),

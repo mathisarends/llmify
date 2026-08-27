@@ -53,8 +53,9 @@ class WebSocketResponsesTransport:
                 "Install py-llmify[websocket]."
             )
 
+        extra_headers = await _websocket_headers(client)
         try:
-            async with connect() as connection:
+            async with connect(extra_headers=extra_headers) as connection:
                 yield _WebSocketResponsesSession(connection)
         except OpenAIError as exc:
             if "openai[realtime]" not in str(exc):
@@ -63,6 +64,17 @@ class WebSocketResponsesTransport:
                 "Responses WebSocket transport requires the 'websockets' package. "
                 "Install py-llmify[websocket]."
             ) from exc
+
+
+async def _websocket_headers(client: AsyncOpenAI) -> dict[str, str]:
+    """Resolve dynamic credentials and forward client headers to the handshake."""
+    await client._refresh_api_key()
+    headers = {**client.auth_headers, **client.default_headers}
+    return {
+        key: value
+        for key, value in headers.items()
+        if isinstance(value, str) and key.lower() != "user-agent"
+    }
 
 
 class _HTTPResponsesSession:
