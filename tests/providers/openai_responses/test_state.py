@@ -31,7 +31,7 @@ from llmify import (
     WebSocketResponsesTransport,
     tool,
 )
-from llmify.providers.openai_responses import _build_request
+from llmify.providers.openai_responses.client import _build_request
 
 
 @pytest.fixture(autouse=True)

@@ -15,7 +15,7 @@ from llmify import (
     ResponsesOptions,
     WebSocketResponsesTransport,
 )
-from llmify.auth import CodexCliAuth, CodexCredentialsError
+from llmify.providers.codex import CodexCliAuth, CodexCredentialsError
 from llmify.exceptions import CredentialsUnavailableError
 
 
@@ -39,7 +39,7 @@ def _auth_file(path: Path, account_id: str | None = "acct-123") -> Path:
 
 
 class TestChatCodex:
-    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    @patch("llmify.providers.openai_responses.client.AsyncOpenAI")
     def test_configures_codex_endpoint_and_account_header(self, mock_client) -> None:
         ChatCodex(
             model="gpt-test",
@@ -55,7 +55,7 @@ class TestChatCodex:
             default_headers={"ChatGPT-Account-Id": "account-123"},
         )
 
-    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    @patch("llmify.providers.openai_responses.client.AsyncOpenAI")
     def test_reads_access_key_from_codex_environment(
         self, mock_client, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -65,7 +65,7 @@ class TestChatCodex:
 
         assert mock_client.call_args.kwargs["api_key"] == "environment-token"
 
-    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    @patch("llmify.providers.openai_responses.client.AsyncOpenAI")
     def test_preserves_additional_headers(self, mock_client) -> None:
         ChatCodex(
             model="gpt-test",
@@ -79,7 +79,7 @@ class TestChatCodex:
             "ChatGPT-Account-Id": "account-123",
         }
 
-    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    @patch("llmify.providers.openai_responses.client.AsyncOpenAI")
     def test_exposes_responses_configuration_explicitly(self, mock_client) -> None:
         transport = WebSocketResponsesTransport()
         options = ResponsesOptions(
@@ -117,7 +117,7 @@ class TestChatCodex:
 
 
 class TestChatCodexFromCli:
-    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    @patch("llmify.providers.openai_responses.client.AsyncOpenAI")
     @pytest.mark.asyncio
     async def test_borrows_account_id_and_token_from_the_cli(
         self, mock_client, tmp_path: Path
@@ -133,7 +133,7 @@ class TestChatCodexFromCli:
         assert isinstance(kwargs["api_key"], CodexCliAuth)
         assert await kwargs["api_key"]() == stored_token
 
-    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    @patch("llmify.providers.openai_responses.client.AsyncOpenAI")
     def test_forwards_model_options(self, mock_client, tmp_path: Path) -> None:
         llm = ChatCodex.from_cli(
             model="gpt-test",
@@ -146,7 +146,7 @@ class TestChatCodexFromCli:
         assert llm._default_max_retries == 5
         assert mock_client.call_args.kwargs["max_retries"] == 0
 
-    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    @patch("llmify.providers.openai_responses.client.AsyncOpenAI")
     def test_forwards_the_reasoning_effort(self, mock_client, tmp_path: Path) -> None:
         llm = ChatCodex.from_cli(
             model="gpt-test",
@@ -156,7 +156,7 @@ class TestChatCodexFromCli:
 
         assert llm._default_kwargs["reasoning_effort"] == "xhigh"
 
-    @patch("llmify.providers.openai_responses.AsyncOpenAI")
+    @patch("llmify.providers.openai_responses.client.AsyncOpenAI")
     def test_forwards_responses_options(self, mock_client, tmp_path: Path) -> None:
         transport = WebSocketResponsesTransport()
         options = ResponsesOptions(reasoning_summary="auto")

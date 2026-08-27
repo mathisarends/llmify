@@ -47,13 +47,13 @@ from llmify.providers._openai_utils import (
     tool_call,
     tool_schemas,
 )
-from llmify.providers.openai_responses_transport import (
+from .transport import (
     HTTPResponsesTransport,
     ResponsesSession,
     ResponsesTransport,
     WebSocketResponsesTransport,
 )
-from llmify.providers.openai_responses_types import (
+from .types import (
     ContinuationMode,
     OpenAIResponsesCompletion,
     OpenAIResponsesState,

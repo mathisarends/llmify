@@ -1,14 +1,14 @@
-from llmify.providers.anthropic_types import (
+from llmify.providers.anthropic.types import (
     AnthropicCompletion,
     AnthropicStreamEnd,
     AnthropicUsage,
 )
-from llmify.providers.google_types import (
+from llmify.providers.google.types import (
     GoogleCompletion,
     GoogleStreamEnd,
     GoogleUsage,
 )
-from llmify.providers.openai_responses_types import OpenAIResponsesUsage
+from llmify.providers.openai_responses.types import OpenAIResponsesUsage
 from llmify.views import ChatInvokeUsage
 
 COMMON_FIELDS = {

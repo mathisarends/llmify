@@ -4,17 +4,21 @@ from typing import Any, Self
 
 import httpx
 
-from llmify.auth.codex_cli import CodexCliAuth, read_codex_credentials
 from llmify.providers._openai_utils import resolve_api_key
-from llmify.providers.openai_responses import ChatOpenAIResponses, ReasoningEffort
-from llmify.providers.openai_responses_transport import ResponsesTransport
-from llmify.providers.openai_responses_types import (
+from llmify.providers.openai_responses import (
+    ChatOpenAIResponses,
+    ReasoningEffort,
+    ResponsesTransport,
+)
+from llmify.providers.openai_responses.types import (
     ContinuationMode,
     PromptCacheOptions,
     ReasoningSummary,
     ResponsesOptions,
 )
 from llmify.retries import RetryCallback
+
+from .auth import CodexCliAuth, read_codex_credentials
 
 _CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 

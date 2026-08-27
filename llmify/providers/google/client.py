@@ -37,7 +37,7 @@ from llmify.messages import (
     ToolResultMessage,
     UserMessage,
 )
-from llmify.providers.google_types import (
+from .types import (
     GoogleCompletion,
     GoogleStreamEnd,
     GoogleStreamEvent,

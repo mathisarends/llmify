@@ -23,7 +23,8 @@ from llmify.exceptions import (
 )
 from llmify.exceptions import RateLimitError as LLMRateLimitError
 from llmify.messages import UserMessage
-from llmify.providers.anthropic import ChatAnthropic, _map_anthropic_error
+from llmify.providers.anthropic import ChatAnthropic
+from llmify.providers.anthropic.client import _map_anthropic_error
 from llmify.views import ChatInvokeCompletion
 
 

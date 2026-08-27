@@ -40,20 +40,25 @@ from .tools import (
 )
 
 if TYPE_CHECKING:
-    from .auth import CodexCliAuth, CodexCredentials, CodexCredentialsError
     from .providers.openai import ChatOpenAI, OpenAIModel
     from .providers.azure import ChatAzureOpenAI, ChatAzureOpenAIResponses
     from .providers.cerebras import ChatCerebras, CerebrasModel
-    from .providers.codex import ChatCodex
+    from .providers.codex import (
+        ChatCodex,
+        CodexCliAuth,
+        CodexCredentials,
+        CodexCredentialsError,
+    )
     from .providers.openai_compatible import OpenAICompatible
-    from .providers.openai_responses import ChatOpenAIResponses, ReasoningEffort
-    from .providers.openai_responses_transport import (
+    from .providers.openai_responses import (
+        ChatOpenAIResponses,
         HTTPResponsesTransport,
+        ReasoningEffort,
         ResponsesSession,
         ResponsesTransport,
         WebSocketResponsesTransport,
     )
-    from .providers.openai_responses_types import (
+    from .providers.openai_responses.types import (
         ContinuationMode,
         OpenAIResponsesCompletion,
         OpenAIResponsesState,
@@ -66,17 +71,19 @@ if TYPE_CHECKING:
         StreamOutputItemDone,
         StreamReasoningSummaryDelta,
     )
-    from .providers.anthropic import ChatAnthropic, AnthropicModel
-    from .providers.anthropic_types import (
+    from .providers.anthropic import (
+        AnthropicModel,
         AnthropicCompletion,
         AnthropicStreamEnd,
         AnthropicUsage,
+        ChatAnthropic,
     )
-    from .providers.google import ChatGoogle, GoogleModel
-    from .providers.google_types import (
+    from .providers.google import (
         GoogleCompletion,
+        GoogleModel,
         GoogleStreamEnd,
         GoogleUsage,
+        ChatGoogle,
     )
 
 
@@ -117,17 +124,17 @@ def __getattr__(name: str):
         return ChatCodex
 
     if name == "CodexCliAuth":
-        from .auth import CodexCliAuth
+        from .providers.codex import CodexCliAuth
 
         return CodexCliAuth
 
     if name == "CodexCredentials":
-        from .auth import CodexCredentials
+        from .providers.codex import CodexCredentials
 
         return CodexCredentials
 
     if name == "CodexCredentialsError":
-        from .auth import CodexCredentialsError
+        from .providers.codex import CodexCredentialsError
 
         return CodexCredentialsError
 
@@ -154,9 +161,9 @@ def __getattr__(name: str):
         "StreamOutputItemDone",
         "StreamReasoningSummaryDelta",
     }:
-        from .providers import openai_responses_types
+        from .providers import openai_responses
 
-        return getattr(openai_responses_types, name)
+        return getattr(openai_responses, name)
 
     if name in {
         "HTTPResponsesTransport",
@@ -164,9 +171,9 @@ def __getattr__(name: str):
         "ResponsesTransport",
         "WebSocketResponsesTransport",
     }:
-        from .providers import openai_responses_transport
+        from .providers import openai_responses
 
-        return getattr(openai_responses_transport, name)
+        return getattr(openai_responses, name)
 
     if name == "OpenAICompatible":
         from .providers.openai_compatible import OpenAICompatible
@@ -188,9 +195,9 @@ def __getattr__(name: str):
         "AnthropicStreamEnd",
         "AnthropicUsage",
     }:
-        from .providers import anthropic_types
+        from .providers import anthropic
 
-        return getattr(anthropic_types, name)
+        return getattr(anthropic, name)
 
     if name == "ChatGoogle":
         from .providers.google import ChatGoogle
@@ -207,9 +214,9 @@ def __getattr__(name: str):
         "GoogleStreamEnd",
         "GoogleUsage",
     }:
-        from .providers import google_types
+        from .providers import google
 
-        return getattr(google_types, name)
+        return getattr(google, name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

@@ -11,7 +11,7 @@ from llmify.messages import (
     SystemMessage,
     UserMessage,
 )
-from llmify.providers.google import (
+from llmify.providers.google.client import (
     _build_config,
     _convert_messages,
     _convert_tool,

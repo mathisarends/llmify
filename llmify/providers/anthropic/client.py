@@ -55,7 +55,7 @@ from llmify.messages import (
     ToolResultMessage,
     UserMessage,
 )
-from llmify.providers.anthropic_types import (
+from .types import (
     AnthropicCompletion,
     AnthropicStreamEnd,
     AnthropicStreamEvent,

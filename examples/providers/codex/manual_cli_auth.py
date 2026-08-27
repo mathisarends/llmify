@@ -8,7 +8,7 @@ across several clients.
 import asyncio
 
 from llmify import ChatCodex, CodexCliAuth, UserMessage
-from llmify.auth import codex_auth_path, codex_home, read_codex_credentials
+from llmify.providers.codex import codex_auth_path, codex_home, read_codex_credentials
 
 
 async def main() -> None:

@@ -60,9 +60,9 @@ def __getattr__(name: str):
         "StreamOutputItemDone",
         "StreamReasoningSummaryDelta",
     }:
-        from . import openai_responses_types
+        from . import openai_responses
 
-        return getattr(openai_responses_types, name)
+        return getattr(openai_responses, name)
 
     if name in {
         "HTTPResponsesTransport",
@@ -70,9 +70,9 @@ def __getattr__(name: str):
         "ResponsesTransport",
         "WebSocketResponsesTransport",
     }:
-        from . import openai_responses_transport
+        from . import openai_responses
 
-        return getattr(openai_responses_transport, name)
+        return getattr(openai_responses, name)
 
     if name == "OpenAICompatible":
         from .openai_compatible import OpenAICompatible
@@ -89,9 +89,9 @@ def __getattr__(name: str):
         "AnthropicStreamEnd",
         "AnthropicUsage",
     }:
-        from . import anthropic_types
+        from . import anthropic
 
-        return getattr(anthropic_types, name)
+        return getattr(anthropic, name)
 
     if name == "ChatGoogle":
         from .google import ChatGoogle
@@ -103,9 +103,9 @@ def __getattr__(name: str):
         "GoogleStreamEnd",
         "GoogleUsage",
     }:
-        from . import google_types
+        from . import google
 
-        return getattr(google_types, name)
+        return getattr(google, name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

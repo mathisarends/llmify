@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from llmify.auth import (
+from llmify.providers.codex import (
     CodexCliAuth,
     CodexCredentials,
     CodexCredentialsError,
@@ -17,7 +17,7 @@ from llmify.auth import (
     read_codex_credentials,
     refresh_codex_credentials,
 )
-from llmify.auth.codex_cli import CodexRefreshResponse
+from llmify.providers.codex.auth import CodexRefreshResponse
 from llmify.exceptions import CredentialsUnavailableError
 
 
@@ -186,7 +186,7 @@ class TestReadCodexCredentials:
 @pytest.mark.asyncio
 class TestRefreshCodexCredentials:
     async def test_leaves_a_fresh_token_alone(self, auth_file: Path) -> None:
-        with patch("llmify.auth.codex_cli._request_refresh") as request_refresh:
+        with patch("llmify.providers.codex.auth._request_refresh") as request_refresh:
             credentials = await refresh_codex_credentials(auth_path=auth_file)
 
         request_refresh.assert_not_called()
@@ -199,7 +199,7 @@ class TestRefreshCodexCredentials:
         refreshed = _refreshed()
 
         with patch(
-            "llmify.auth.codex_cli._request_refresh",
+            "llmify.providers.codex.auth._request_refresh",
             AsyncMock(return_value=refreshed),
         ) as request_refresh:
             credentials = await refresh_codex_credentials(auth_path=path)
@@ -216,7 +216,7 @@ class TestRefreshCodexCredentials:
         # its token avoids rotating the refresh token a second time.
         _write_auth(stale_auth_file, {"access_token": _jwt(3600)})
 
-        with patch("llmify.auth.codex_cli._request_refresh") as request_refresh:
+        with patch("llmify.providers.codex.auth._request_refresh") as request_refresh:
             credentials = await refresh_codex_credentials(auth_path=stale_auth_file)
 
         request_refresh.assert_not_called()
@@ -228,7 +228,8 @@ class TestRefreshCodexCredentials:
         refreshed = _refreshed()
 
         with patch(
-            "llmify.auth.codex_cli._request_refresh", AsyncMock(return_value=refreshed)
+            "llmify.providers.codex.auth._request_refresh",
+            AsyncMock(return_value=refreshed),
         ):
             await refresh_codex_credentials(auth_path=stale_auth_file)
 
@@ -247,7 +248,7 @@ class TestRefreshCodexCredentials:
         )
 
         with patch(
-            "llmify.auth.codex_cli._request_refresh",
+            "llmify.providers.codex.auth._request_refresh",
             AsyncMock(return_value=_refreshed()),
         ):
             await refresh_codex_credentials(auth_path=path)
@@ -261,7 +262,7 @@ class TestRefreshCodexCredentials:
         self, tmp_path: Path, stale_auth_file: Path
     ) -> None:
         with patch(
-            "llmify.auth.codex_cli._request_refresh",
+            "llmify.providers.codex.auth._request_refresh",
             AsyncMock(return_value=_refreshed()),
         ):
             await refresh_codex_credentials(auth_path=stale_auth_file)
@@ -274,7 +275,8 @@ class TestRefreshCodexCredentials:
         partial = CodexRefreshResponse(access_token=_jwt(3600))
 
         with patch(
-            "llmify.auth.codex_cli._request_refresh", AsyncMock(return_value=partial)
+            "llmify.providers.codex.auth._request_refresh",
+            AsyncMock(return_value=partial),
         ):
             await refresh_codex_credentials(auth_path=stale_auth_file)
 
@@ -374,7 +376,7 @@ class TestCodexCliAuth:
     ) -> None:
         auth = CodexCliAuth(read_codex_credentials(auth_path=auth_file))
 
-        with patch("llmify.auth.codex_cli.refresh_codex_credentials") as refresh:
+        with patch("llmify.providers.codex.auth.refresh_codex_credentials") as refresh:
             assert await auth() == auth.credentials.access_token
             assert await auth() == auth.credentials.access_token
 
@@ -388,7 +390,8 @@ class TestCodexCliAuth:
         refreshed = _refreshed()
 
         with patch(
-            "llmify.auth.codex_cli._request_refresh", AsyncMock(return_value=refreshed)
+            "llmify.providers.codex.auth._request_refresh",
+            AsyncMock(return_value=refreshed),
         ):
             auth = CodexCliAuth(read_codex_credentials(auth_path=path))
             token = await auth()
@@ -410,7 +413,7 @@ class TestCodexCliAuth:
             return refreshed
 
         with patch(
-            "llmify.auth.codex_cli._request_refresh", side_effect=slow_refresh
+            "llmify.providers.codex.auth._request_refresh", side_effect=slow_refresh
         ) as request_refresh:
             auth = CodexCliAuth(read_codex_credentials(auth_path=path))
             tokens = await asyncio.gather(*(auth() for _ in range(8)))

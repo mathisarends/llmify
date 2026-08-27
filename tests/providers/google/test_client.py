@@ -13,7 +13,7 @@ from llmify import AssistantMessage, ToolResultMessage
 from llmify import retries as retries_provider
 from llmify.base import ChatModel
 from llmify.messages import Function, ToolCall
-from llmify.providers.google import (
+from llmify.providers.google.client import (
     ChatGoogle,
     _convert_messages,
     _map_google_error,
@@ -246,7 +246,7 @@ class TestGoogleRetries:
         return model
 
     def test_disables_sdk_retries(self) -> None:
-        with patch("llmify.providers.google.genai.Client") as client:
+        with patch("llmify.providers.google.client.genai.Client") as client:
             ChatGoogle(api_key="test-key", max_retries=4)
 
         http_options = client.call_args.kwargs["http_options"]

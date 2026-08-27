@@ -12,7 +12,7 @@ from llmify.exceptions import (
     RateLimitError,
     RetryableError,
 )
-from llmify.providers.google import _map_google_error
+from llmify.providers.google.client import _map_google_error
 
 
 def _api_error(

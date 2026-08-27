@@ -19,8 +19,8 @@ from llmify.messages import (
     ToolResultMessage,
     UserMessage,
 )
-from llmify.providers.anthropic import (
-    ChatAnthropic,
+from llmify.providers.anthropic import ChatAnthropic
+from llmify.providers.anthropic.client import (
     _build_params,
     _convert_messages,
     _convert_tool,

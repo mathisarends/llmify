@@ -621,7 +621,7 @@ shared across several clients, compose the two pieces yourself:
 
 ```python
 from llmify import ChatCodex, CodexCliAuth
-from llmify.auth import read_codex_credentials
+from llmify.providers.codex import read_codex_credentials
 
 credentials = read_codex_credentials()  # or read_codex_credentials(auth_path=...)
 print(credentials.expires_in)           # seconds until the access token expires

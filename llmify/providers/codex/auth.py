@@ -57,7 +57,7 @@ class CodexCredentials(BaseModel):
         return time.time() < self.expires_at - _REFRESH_SKEW_SECONDS
 
 
-class CodexTokens(BaseModel):
+class _CodexTokens(BaseModel):
     # The CLI owns this file, so unknown keys are carried through a refresh
     # instead of being dropped on write-back.
     model_config = ConfigDict(extra="allow")
@@ -72,7 +72,7 @@ class CodexAuthFile(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     auth_mode: str | None = None
-    tokens: CodexTokens = Field(default_factory=CodexTokens)
+    tokens: _CodexTokens = Field(default_factory=_CodexTokens)
     last_refresh: str | None = None
 
 
@@ -193,7 +193,7 @@ async def refresh_codex_credentials(
 
 
 def _credentials(
-    path: Path, tokens: CodexTokens, *, refreshed: bool = False
+    path: Path, tokens: _CodexTokens, *, refreshed: bool = False
 ) -> CodexCredentials:
     if not tokens.access_token:
         raise CodexCredentialsError(

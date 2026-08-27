@@ -30,7 +30,7 @@ from llmify.messages import (
     ToolResultMessage,
     UserMessage,
 )
-from llmify.providers.openai_responses import _convert_messages, _convert_tools
+from llmify.providers.openai_responses.client import _convert_messages, _convert_tools
 from llmify.tools import FunctionTool
 from llmify.views import StreamEnd, StreamTextDelta, StreamToolCall
 
